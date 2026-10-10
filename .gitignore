@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+# local only: real vault paths and internal notes naming customers
+config.json
+PLAN.md
+TODO.md

@@ -1,0 +1,10 @@
+{
+  "vaults": [
+    {
+      "name": "my-vault",
+      "path": "/absolute/path/to/an/obsidian/vault",
+      "exclude": ["README.md"],
+      "rootSection": "General"
+    }
+  ]
+}
