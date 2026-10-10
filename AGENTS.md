@@ -32,8 +32,10 @@ Verify before telling the user it works: server returns 200, the startup log lin
 
 ## config.json
 ```json
-{ "vaults": [ { "name": "my-vault", "path": "/abs/path", "exclude": ["README.md"], "rootSection": "General" } ] }
+{ "vaults": [ { "name": "my-vault", "path": "/abs/path", "exclude": ["README.md"], "rootSection": "General", "writable": false } ] }
 ```
+`writable` (default `false`) lets the app edit that vault's markdown notes. Ask the user per vault; leave iCloud-synced vaults and anything sensitive read-only unless they opt in.
+
 `config.json` is git-ignored because it holds local paths. Only `config.example.json` is committed. Server restart is required after changing it.
 
 ## Layout
@@ -52,9 +54,9 @@ Verify before telling the user it works: server returns 200, the startup log lin
 Data contract (`src/vault.d.ts`): a note has `id, vault, path, abs, section, title, tags, status, source, fetched, summary, body, links, backlinks, mtime`, optional `kind: 'drawing'` and `scene`. Note ids are the bare filename when unique, else `<vault>/<path>`. Wikilinks resolve within the same vault first, then across vaults.
 
 ## Conventions and gotchas
-- **Port 7777 is hard-coded** in three places: `vite.config.ts` (`port`, `strictPort`), the Origin check in `vault-plugin.ts` (`/api/delete`), and the launchd script. To change it, update all three.
+- **Port:** defaults to 7777 and is read from env `KM_PORT` by both `vite.config.ts` and `vault-plugin.ts` (Host and Origin allowlists). The launchd script still passes `--port 7777`; if you change the port also set `KM_PORT` there. Other env: `KM_CONFIG` (alternate config file) and `KM_BACKUP_DIR` (default `~/.knowledge-map/backups`). Use all three to run a throwaway instance for tests beside a real one.
 - **Never commit** `config.json`, vault content, screenshots of real vaults, or anything from a user's notes. Vaults can contain customer or personal data. Do not paste note content into issues, commits or logs.
-- **Keep it read-only.** Do not add write paths (editing, renaming) without: a backup or git history of the vault, a secret token plus Origin check on the endpoint (localhost servers are reachable from any web page), atomic writes with mtime conflict detection, and no silent reformatting of frontmatter or hard-wrapping prose. The delete endpoint takes a note id, never a path, and checks the file is inside a configured vault.
+- **Write paths are guarded; keep them that way.** `vault-plugin.ts` exposes `GET /api/session` (per-start token), `GET /api/raw?id=` (exact file text + sha256), `POST /api/save`, `POST /api/delete`. Every call goes through `guard()`: Host allowlist (DNS rebinding), `X-KM: 1` header (forces a CORS preflight we never answer), and for writes our own Origin plus the token. Save works on the raw file text (frontmatter and CRLF untouched), returns 409 with the current text if the file changed since load (hash compare), writes a backup first to `KM_BACKUP_DIR/<vault>/<path>.history/<timestamp>.md` (keeps 50 versions / 90 days, always the newest), then writes atomically (dotfile temp in the same folder, fsync, rename). Ids map to files server-side and must resolve inside a `writable` vault (realpath checked, so symlinks cannot escape); only `.md`, never drawings, max 2 MB. Do not loosen any of this, and add a test for any new write path.
 - Excluded files never reach the browser. When a user names a secret file, add it to `exclude` and confirm the note count dropped.
 - macOS: background processes may be blocked from `~/Documents`, `~/Desktop` or iCloud folders. Symptom: vault shows 0 notes or `vault not readable` in the log. Fix: grant the `node` binary Full Disk Access, then restart. iCloud notes not yet downloaded appear as `.icloud` stubs and are skipped.
 - Supported content: markdown with frontmatter (`title`, `tags`, `summary`, `type`, `status`, `related`, `source`), wikilinks, `![[image]]`, `[x](./y.md)` links, callouts, Excalidraw (`*.excalidraw.md` and `*.excalidraw`). Not supported: `.canvas`, `.base`, PDF embeds, executing Dataview (the block is shown with a "not run" label).
