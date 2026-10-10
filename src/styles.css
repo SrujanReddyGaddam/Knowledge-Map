@@ -225,3 +225,10 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .ed-ac { position:absolute; left:10px; right:10px; bottom:10px; z-index:5; margin:0; padding:4px; list-style:none; background:var(--panel); border:1px solid var(--ink); border-radius:12px; box-shadow:0 8px 30px #0003; max-height:280px; overflow:auto; }
 .ed-ac li { display:flex; flex-direction:column; gap:1px; padding:6px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
 .ed-ac li.on { background:var(--ink); color:var(--bg); } .ed-ac small { font:10.5px var(--mono); opacity:.65; word-break:break-all; }
+
+.rename { display:flex; flex-direction:column; gap:12px; font-size:13px; }
+.rn-label { font:11px var(--mono); letter-spacing:.04em; color:var(--mute); }
+.rn-input { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--ink); padding:10px 12px; font:13px var(--mono); outline:none; } .rn-input:focus { border-color:var(--ink); }
+.rn-plan { border:1px solid var(--line); border-radius:12px; padding:12px 14px; line-height:1.5; max-height:46vh; overflow:auto; } .rn-plan p { margin:8px 0 4px; } .rn-plan ul { margin:4px 0; padding-left:18px; } .rn-plan small { color:var(--mute); font:11px var(--mono); margin-left:6px; }
+.rn-note { color:var(--mute); font-size:12px; } .rn-warn { color:#b3392b; } .rn-warn label { display:flex; gap:8px; align-items:center; margin-top:6px; color:var(--ink); }
+.rn-actions { display:flex; gap:10px; } .rn-actions .btn { padding:5px 14px; }

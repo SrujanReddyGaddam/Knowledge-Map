@@ -21,3 +21,10 @@ export const trashNote = (id: string) => call('/api/delete', { id });
 export type Version = { name: string; time: string; size: number };
 export const historyOf = (id: string) => call('/api/history?id=' + encodeURIComponent(id));
 export const versionOf = (id: string, name: string) => call('/api/version?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name));
+export type RenamePlan = {
+  from: string; to: string; planHash: string; links: number; selfCount: number; blocked: string[]; extraRefs: number;
+  updates: { id: string; title: string; path: string; vault: string; count: number }[];
+  readOnly: { id: string; title: string; vault: string; path: string; count: number }[];
+};
+export const planRename = (id: string, to: string) => call('/api/rename', { id, to, dryRun: true });
+export const renameNote = (id: string, to: string, planHash: string, ack: boolean) => call('/api/rename', { id, to, planHash, ack });

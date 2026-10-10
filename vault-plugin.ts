@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import LZString from 'lz-string';
 import type { Plugin } from 'vite';
+import { rewriteLinks, otherRelativeRefs } from './rename-links';
 
 type VaultCfg = { name?: string; path: string; exclude?: string[]; rootSection?: string; writable?: boolean };
 type Config = { vaults?: VaultCfg[]; vault?: string; exclude?: string[]; rootSection?: string };
@@ -332,6 +333,124 @@ export default function vault(): Plugin {
         if (!BNAME.test(name)) return send(res, 400, { error: 'bad version name' });
         try { send(res, 200, { text: fs.readFileSync(path.join(histDir(f), name), 'utf8') }); }
         catch { send(res, 404, { error: 'version not found' }); }
+      });
+
+      // ---- rename / move ---------------------------------------------------------------------------------------
+      // Same vault only. Plans first (dry run, no writes), then applies the exact plan: every touched file is backed up, links in other
+      // writable notes are rewritten atomically, the note is renamed, and its history follows it. Anything that fails is rolled back.
+      const BADNAME = /[\\:*?"<>|\u0000-\u001f]/;
+      const baseOf = (rel: string) => (rel.split('/').pop() || '').replace(/\.md$/i, '');
+      const atomicWrite = (abs: string, buf: Buffer) => {
+        const mode = fs.statSync(abs).mode & 0o777;
+        const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.km-tmp-${process.pid}-${Date.now()}`);
+        const fd = fs.openSync(tmp, 'wx', mode);
+        try { fs.writeSync(fd, buf); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+        try { fs.renameSync(tmp, abs); } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+        selfWrites.set(abs, Date.now());
+      };
+      type Edit = { id: string; title: string; path: string; vault: string; abs: string; root: string; orig: Buffer; next: Buffer; wiki: number; md: number };
+      const planRename = (id: unknown, toRaw: unknown) => {
+        const f = editable(id);
+        if ('err' in f) return { err: f.err };
+        if (typeof toRaw !== 'string' || toRaw.length > 400) return { err: [400, 'bad request'] as [number, string] };
+        const segs = toRaw.trim().replace(/\.md$/i, '').split('/');
+        if (segs.length > 12 || segs.some(sg => !sg || sg === '.' || sg === '..' || sg.startsWith('.') || BADNAME.test(sg) || /[ .]$/.test(sg) || sg.length > 200)) return { err: [400, 'That name is not allowed (no empty parts, dots at the start, or the characters \\ : * ? " < > |).'] as [number, string] };
+        const vaultCfg = current.vaults.find(v => v.name === f.n.vault)!;
+        const oldRel = path.relative(f.root, f.abs).split(path.sep).join('/'), newRel = segs.join('/') + '.md';
+        if (newRel === oldRel) return { err: [400, 'That is the current name.'] as [number, string] };
+        const caseOnly = newRel.toLowerCase() === oldRel.toLowerCase();
+        const newReal = path.join(f.root, ...segs) + '.md';
+        // deepest existing ancestor must be a real folder inside the vault (symlinks cannot lead out)
+        let anc = path.dirname(newReal);
+        while (!fs.existsSync(anc) && anc.length > f.root.length) anc = path.dirname(anc);
+        try { if (!fs.statSync(anc).isDirectory() || !(fs.realpathSync(anc) + path.sep).startsWith(f.root + path.sep)) return { err: [400, 'That folder is not inside the vault.'] as [number, string] }; }
+        catch { return { err: [400, 'That folder is not inside the vault.'] as [number, string] }; }
+        if (fs.existsSync(newReal) && !(caseOnly && fs.statSync(newReal).ino === fs.statSync(f.abs).ino)) return { err: [409, 'A file already exists at that path.'] as [number, string] };
+        const oldBase = baseOf(oldRel), newBase = baseOf(newRel), oldKey = key(oldBase), baseChanged = key(newBase) !== oldKey || newBase !== oldBase;
+        const sameVault = current.data.notes.filter((x: any) => x.vault === f.n.vault && x.id !== f.n.id);
+        if (baseChanged) {
+          const clash = sameVault.find((x: any) => key(baseOf(x.path)) === key(newBase) && !(caseOnly));
+          if (clash) return { err: [409, `A note named "${newBase}" already exists in this vault (${clash.path}). Two notes with one name make [[links]] ambiguous.`] as [number, string] };
+          if (sameVault.some((x: any) => key(baseOf(x.path)) === oldKey)) return { err: [409, 'Another note in this vault has the same name, so links to it are ambiguous. Rename it in Obsidian.'] as [number, string] };
+        }
+        const vIdx = current.vaults.findIndex(v => v.name === f.n.vault);
+        const earlier = (vn: string) => current.vaults.findIndex(v => v.name === vn) < vIdx;
+        const oldAbsN = path.resolve(f.n.abs), newAbsN = path.resolve(vaultCfg.path, ...segs) + '.md';
+        const edits: Edit[] = [], readOnly: { id: string; title: string; vault: string; path: string; count: number }[] = [], blocked: string[] = [];
+        let self = null as Edit | null, extraRefs = 0;
+        for (const n of current.data.notes as any[]) {
+          if (n.kind === 'drawing') continue;
+          const isSelf = n.id === f.n.id;
+          const wiki = n.vault === f.n.vault || (!current.data.notes.some((x: any) => x.vault === n.vault && key(baseOf(x.path)) === oldKey)
+            && !current.data.notes.some((x: any) => x.vault !== f.n.vault && earlier(x.vault) && key(baseOf(x.path)) === oldKey));
+          let orig: Buffer; try { orig = fs.readFileSync(isSelf ? f.abs : n.abs); } catch { continue; }
+          if (orig.length > MAX_EDIT_BYTES) { if (orig.toString('utf8').toLowerCase().includes(oldKey)) blocked.push(`${n.path} is too large to update`); continue; }
+          const text = orig.toString('utf8');
+          const r = rewriteLinks(text, { oldKey, newBase, newRelNoExt: segs.join('/'), wiki, samePath: n.vault === f.n.vault, oldAbs: oldAbsN, newAbs: newAbsN, selfOld: isSelf ? oldAbsN : path.resolve(n.abs), selfNew: isSelf ? newAbsN : path.resolve(n.abs) });
+          if (isSelf) extraRefs = path.dirname(oldRel) !== path.dirname(newRel) ? otherRelativeRefs(text) : 0;
+          if (r.wiki + r.md === 0) { if (isSelf) self = { id: n.id, title: n.title, path: n.path, vault: n.vault, abs: f.abs, root: f.root, orig, next: orig, wiki: 0, md: 0 }; continue; }
+          if (isSelf) { self = { id: n.id, title: n.title, path: n.path, vault: n.vault, abs: f.abs, root: f.root, orig, next: Buffer.from(r.text), wiki: r.wiki, md: r.md }; continue; }
+          const e = editable(n.id);
+          if ('err' in e) { if (e.err[0] === 403) readOnly.push({ id: n.id, title: n.title, vault: n.vault, path: n.path, count: r.wiki + r.md }); else blocked.push(`${n.path}: ${e.err[1]}`); continue; }
+          edits.push({ id: n.id, title: n.title, path: n.path, vault: n.vault, abs: e.abs, root: e.root, orig, next: Buffer.from(r.text), wiki: r.wiki, md: r.md });
+        }
+        const planHash = sha(JSON.stringify([oldRel, newRel, self ? sha(self.orig) : '', edits.map(e => [e.abs, sha(e.orig), sha(e.next)])]));
+        const selfCount = self ? self.wiki + self.md : 0;
+        return {
+          f, self, edits, oldRel, newRel, newReal, caseOnly,
+          plan: {
+            from: oldRel, to: newRel, planHash, selfCount, blocked,
+            updates: edits.map(e => ({ id: e.id, title: e.title, path: e.path, vault: e.vault, count: e.wiki + e.md })),
+            readOnly, extraRefs,
+            links: edits.reduce((a, e) => a + e.wiki + e.md, 0) + selfCount,
+          },
+        };
+      };
+      server.middlewares.use('/api/rename', async (req, res) => {
+        const bad = guard(req, { post: true, token: true });
+        if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        try {
+          const { id, to, dryRun, planHash, ack } = JSON.parse(await readBody(req, 8192) || '{}');
+          const p = planRename(id, to);
+          if ('err' in p) return send(res, p.err![0], { error: p.err![1] });
+          if (dryRun === true) return send(res, 200, p.plan);
+          if (p.plan.blocked.length) return send(res, 409, { error: 'Cannot rename safely: ' + p.plan.blocked.join('; ') });
+          if (planHash !== p.plan.planHash) return send(res, 409, { error: 'changed', message: 'Notes changed since the preview. Review the updated preview and try again.', plan: p.plan });
+          if (p.plan.readOnly.length && ack !== true) return send(res, 409, { error: 'ack', message: 'Links in read-only vaults will break. Confirm to continue.', plan: p.plan });
+          // 1. back up everything we are about to touch (history of the moved note travels with it in step 4)
+          const bname = new Date().toISOString().replace(/[:.]/g, '-') + '.md';
+          const touched = [...p.edits, ...(p.self && p.self.next !== p.self.orig ? [p.self] : [])];
+          for (const e of touched) {
+            const dir = backupDirFor(e.vault, path.relative(e.root, e.abs));
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, bname), e.orig, { flag: 'wx' });
+          }
+          // 2. rewrite linking notes, 3. rewrite and rename the note; roll everything back if any step fails
+          const written: Edit[] = [];
+          try {
+            for (const e of p.edits) { atomicWrite(e.abs, e.next); written.push(e); }
+            if (p.self && p.self.next !== p.self.orig) { atomicWrite(p.self.abs, p.self.next); written.push(p.self); }
+            fs.mkdirSync(path.dirname(p.newReal), { recursive: true });
+            if (p.caseOnly) { const t = path.join(path.dirname(p.f.abs), `.${path.basename(p.f.abs)}.km-rename-${process.pid}`); fs.renameSync(p.f.abs, t); fs.renameSync(t, p.newReal); }
+            else { if (fs.existsSync(p.newReal)) throw new Error('A file already exists at that path.'); fs.renameSync(p.f.abs, p.newReal); }
+          } catch (err) {
+            for (const e of written.reverse()) try { atomicWrite(e.abs, e.orig); } catch {}
+            throw err;
+          }
+          // 4. the note's saved versions follow it
+          try {
+            const oh = backupDirFor(p.f.n.vault, p.oldRel), nh = backupDirFor(p.f.n.vault, p.newRel);
+            if (fs.existsSync(oh)) {
+              fs.mkdirSync(nh, { recursive: true });
+              for (const v of fs.readdirSync(oh)) if (!fs.existsSync(path.join(nh, v))) fs.renameSync(path.join(oh, v), path.join(nh, v));
+              try { fs.rmdirSync(oh); } catch {}
+            }
+          } catch (e) { console.log('[vault] rename: could not move history: ' + (e as Error).message); }
+          console.log(`[vault] renamed ${p.oldRel} -> ${p.newRel} in ${p.f.n.vault} (${p.plan.links} link(s) updated in ${p.edits.length + (p.plan.selfCount ? 1 : 0)} note(s))`);
+          current = loadVaults(cfg);
+          const nn = (current.data.notes as any[]).find(x => x.vault === p.f.n.vault && x.path.split(path.sep).join('/') === p.newRel);
+          send(res, 200, { ok: true, newId: nn?.id ?? null, to: p.newRel, links: p.plan.links });
+        } catch (e) { send(res, (e as Error).message === 'too large' ? 413 : 500, { error: String((e as Error).message || e) }); }
       });
 
       // Move one note to the macOS Trash (recoverable). Same guard as the other write paths.
