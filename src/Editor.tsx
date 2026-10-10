@@ -1,6 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { rawNote, saveNote } from './api';
-import type { Note } from 'virtual:vault';
+import data, { type Note } from 'virtual:vault';
+
+// [[ autocomplete: suggest notes by file name, then title, then path; same-vault notes first.
+type Cand = { base: string; title: string; path: string; vault: string; };
+const baseOf = (n: Note) => (n.path.split('/').pop() || '').replace(/\.md$/i, '');
+const subseq = (q: string, t: string) => { let i = 0; for (const c of t) if (c === q[i] && ++i === q.length) return true; return q.length === 0; };
+function suggest(cands: Cand[], q: string, vault: string): Cand[] {
+  const ql = q.trim().toLowerCase(), out: { c: Cand; s: number }[] = [];
+  for (const c of cands) {
+    const b = c.base.toLowerCase(), t = c.title.toLowerCase();
+    let s = 0;
+    if (!ql) s = 1;
+    else if (b === ql) s = 100;
+    else if (b.startsWith(ql)) s = 80;
+    else if (b.includes(ql)) s = 60;
+    else if (t.includes(ql)) s = 50;
+    else if (c.path.toLowerCase().includes(ql)) s = 30;
+    else if (subseq(ql, b)) s = 15;
+    if (s) out.push({ c, s: s + (c.vault === vault ? 5 : 0) });
+  }
+  return out.sort((a, b) => b.s - a.s || a.c.base.length - b.c.base.length || a.c.base.localeCompare(b.c.base)).slice(0, 8).map(x => x.c);
+}
+
 
 export type Draft = { id: string; text: string; baseHash: string; eol: 'lf' | 'crlf' };
 const DRAFT = 'kmDraft';
@@ -30,6 +52,30 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
   const [showTheirs, setShowTheirs] = useState(false);
   const everSaved = useRef(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const cands = useMemo<Cand[]>(() => data.notes.filter(n => n.kind !== 'drawing').map(n => ({ base: baseOf(n), title: n.title, path: n.path, vault: n.vault })), []);
+  const [ac, setAc] = useState<{ start: number; q: string } | null>(null);   // start = index right after "[["
+  const [pick, setPick] = useState(0);
+  const caret = useRef<number | null>(null);
+  const dismissed = useRef(-1);   // Esc hides the list for this [[ until the user leaves it
+  const items = useMemo(() => (ac ? suggest(cands, ac.q, note.vault) : []), [ac, cands, note.vault]);
+  useLayoutEffect(() => { if (caret.current != null && area.current) { area.current.setSelectionRange(caret.current, caret.current); caret.current = null; } });
+  const refresh = (el: HTMLTextAreaElement) => {
+    const pos = el.selectionStart;
+    if (el.selectionEnd !== pos) { setAc(null); return; }
+    const m = el.value.slice(0, pos).match(/\[\[([^\[\]\n|#]*)$/);
+    if (!m) { dismissed.current = -1; setAc(null); return; }
+    const start = pos - m[1].length;
+    if (start === dismissed.current) return;
+    setAc(a => { if (a && a.start === start && a.q === m[1]) return a; setPick(0); return { start, q: m[1] }; });
+  };
+  const accept = (c: Cand) => {
+    const el = area.current; if (!el || !ac) return;
+    const end = el.selectionStart, after = el.value.slice(end);
+    const close = after.startsWith(']]') ? '' : ']]';
+    const next = el.value.slice(0, ac.start) + c.base + close + after;
+    caret.current = ac.start + c.base.length + 2; dismissed.current = -1;
+    setText(next); setAc(null);
+  };
 
   useEffect(() => {
     let live = true;
@@ -82,7 +128,7 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
     <div className="editor">
       <div className="ed-bar">
         <span className={'ed-status' + (dirty ? ' dirty' : '')}>{status}</span>
-        <span className="ed-hint">{eol === 'crlf' ? 'CRLF file, kept as is. ' : ''}&#8984;S save &middot; Esc close</span>
+        <span className="ed-hint">{eol === 'crlf' ? 'CRLF file, kept as is. ' : ''}&#8984;S save &middot; Esc close &middot; [[ links</span>
         <button className="btn primary" disabled={!dirty || saving || !!conflict} onClick={() => save()}>Save</button>
         <button className="btn" onClick={close}>{everSaved.current && !dirty ? 'Done' : 'Cancel'}</button>
       </div>
@@ -99,11 +145,27 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
         </div>
       )}
       {msg && <div className="ed-err">{msg}</div>}
-      <textarea ref={area} className="ed-area" value={text} spellCheck={false} onChange={e => setText(e.target.value)}
+      <textarea ref={area} className="ed-area" value={text} spellCheck={false} onChange={e => { setText(e.target.value); refresh(e.target); }}
+        onSelect={e => refresh(e.currentTarget)} onBlur={() => setAc(null)}
         onKeyDown={e => {
+          if (ac && items.length && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setPick(p => (p + 1) % items.length); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setPick(p => (p + items.length - 1) % items.length); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); accept(items[Math.min(pick, items.length - 1)]); return; }
+          }
+          if (ac && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismissed.current = ac.start; setAc(null); return; }
           if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (dirty && !conflict) save(); }
           else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
         }} />
+      {ac && items.length > 0 && (
+        <ul className="ed-ac" role="listbox" aria-label="Link suggestions">
+          {items.map((c, i) => (
+            <li key={c.vault + c.path} role="option" aria-selected={i === pick} className={i === pick ? 'on' : ''} onMouseDown={e => { e.preventDefault(); accept(c); }} onMouseEnter={() => setPick(i)}>
+              <b>{c.base}</b><small>{c.vault} / {c.path}</small>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
