@@ -43,7 +43,8 @@ Verify before telling the user it works: server returns 200, the startup log lin
 | `src/App.tsx` | State and layout: search, filters (vault/section/tag/focus), Dim/Hide mode, palettes, sound, keyboard shortcuts. |
 | `src/Graph.tsx` | three.js scene, force simulation, camera, drag/pan/zoom, labels. Camera is saved to `sessionStorage` so reloads keep the view. |
 | `src/Panel.tsx` | Side panel: markdown render, wikilinks, callouts, contents list, backlinks with context, hover preview cards, Excalidraw embeds, actions. |
-| `src/Browse.tsx` | Left drawer: Recent, Tree, Health (broken links and orphans). |
+| `src/Browse.tsx` | Left drawer: New (updated since last seen), Recent, Tree, Health (broken links and orphans). |
+| `src/seen.ts` | Per-browser record of which note versions were seen (localStorage) to flag updated notes. |
 | `src/search.ts` | Search index and ranking; operators `tag:` `vault:` `path:` `"phrase"` `-exclude`. |
 | `src/palettes.ts`, `src/sound.ts` | Color palettes (tinted neutrals + one accent) and synthesized click sounds. |
 | `scripts/install-launchd.sh` | macOS always-on installer. |

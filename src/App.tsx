@@ -3,6 +3,7 @@ import vault from 'virtual:vault';
 import Graph from './Graph';
 import Panel from './Panel';
 import Browse from './Browse';
+import { loadSeen, saveSeen, type Seen } from './seen';
 import { shortTitle } from './util';
 import { play, tick, VARIANTS, setVolume } from './sound';
 import { PALETTES, applyColors } from './palettes';
@@ -34,6 +35,12 @@ export default function App() {
   const [tags, setTags] = useState<string[]>(saved.tags ?? []);
   const [vaultSel, setVaultSel] = useState<string[]>(() => { const p = new URLSearchParams(location.search).get('vault'); return p ? p.split(',').filter(Boolean) : saved.vaults ?? []; });
   const [focus, setFocus] = useState<{ id: string; hops: 1 | 2 } | null>(() => (saved.focus && byId.has(saved.focus.id) ? saved.focus : null));
+  const [seenState, setSeenState] = useState<Seen>(loadSeen);
+  useEffect(() => saveSeen(seenState), [seenState]);
+  const changed = useMemo(() => { const s = new Set<string>(); for (const n of vault.notes) if (n.mtime > (seenState.seen[n.id] ?? seenState.base)) s.add(n.id); return s; }, [seenState]);
+  const markAllSeen = useCallback(() => setSeenState({ base: Date.now(), seen: {} }), []);
+  const [hl, setHl] = useState(() => { try { return localStorage.getItem('hlChanged') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('hlChanged', hl ? '1' : '0'); } catch {} }, [hl]);
   const [browse, setBrowse] = useState(() => { try { return localStorage.getItem('browse') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('browse', browse ? '1' : '0'); } catch {} }, [browse]);
   // Survive the live-reload that follows any vault file change (e.g. deleting a note).
@@ -106,6 +113,8 @@ export default function App() {
     } catch (e) { return String(e); }
   }, []);
   const note = selected ? byId.get(selected)! : null;
+  // opening a note marks its current version as seen
+  useEffect(() => { if (note && changed.has(note.id)) setSeenState(s => ({ ...s, seen: { ...s.seen, [note.id]: note.mtime } })); }, [note, changed]);
   const prev = idx >= 0 ? byId.get(navOrder[(idx - 1 + navOrder.length) % navOrder.length])! : null;
   const next = idx >= 0 ? byId.get(navOrder[(idx + 1) % navOrder.length])! : null;
   const lastNote = useRef(note);
@@ -141,7 +150,7 @@ export default function App() {
 
   return (
     <>
-      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} hide={hide} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
+      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} markIds={hl && changed.size ? changed : null} hide={hide} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
       <div className="search-wrap">
         <div className="search-row">
           <input id="search" value={query} onChange={e => setQuery(e.target.value)} placeholder={"Search notes   /  or  \u2318O"} autoComplete="off" spellCheck={false}
@@ -151,7 +160,8 @@ export default function App() {
               else if (e.key === 'ArrowUp') { e.preventDefault(); setCursor(c => Math.max(0, c - 1)); }
               else if (e.key === 'Enter' && hits[cursor]) { select(hits[cursor].note.id); setQuery(''); (e.target as HTMLElement).blur(); }
             }} />
-          <button className={'icon-btn' + (browse ? ' on' : '')} onClick={() => setBrowse(v => !v)} aria-label="Browse notes" title="Browse: recent, tree, health  (b)">
+          <button className={'icon-btn' + (browse ? ' on' : '')} onClick={() => setBrowse(v => !v)} aria-label="Browse notes" title="Browse: new, recent, tree, health  (b)">
+            {changed.size > 0 && <span className="count-badge">{changed.size > 99 ? '99+' : changed.size}</span>}
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7" /></svg>
           </button>
           <button className={'icon-btn' + (filterOpen || filterCount ? ' on' : '')} onClick={() => setFilterOpen(v => !v)} aria-label="Filters" title="Filter by section or tag">
@@ -209,7 +219,7 @@ export default function App() {
           </div>
         )}
       </div>
- {browse && <Browse notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
+ {browse && <Browse notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
         {info && (

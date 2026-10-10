@@ -4,9 +4,10 @@ import { shortTitle } from './util';
 
 type Props = {
   notes: Note[]; byId: Map<string, Note>; brokenLinks: { from: string; target: string }[];
+  changed: Set<string>; onMarkAllSeen: () => void; hl: boolean; onHl: (v: boolean) => void;
   selected: string | null; onSelect: (id: string) => void; onClose: () => void;
 };
-type Tab = 'recent' | 'tree' | 'health';
+type Tab = 'new' | 'recent' | 'tree' | 'health';
 type Dir = { name: string; key: string; dirs: Map<string, Dir>; notes: Note[]; count: number };
 
 const ago = (ms: number) => {
@@ -37,8 +38,8 @@ function buildTree(notes: Note[]) {
   return [...roots.values()];
 }
 
-export default function Browse({ notes, byId, brokenLinks, selected, onSelect, onClose }: Props) {
-  const [tab, setTab] = useState<Tab>(() => { try { const t = localStorage.getItem('browseTab'); return t === 'tree' || t === 'health' ? t : 'recent'; } catch { return 'recent'; } });
+export default function Browse({ notes, byId, brokenLinks, changed, onMarkAllSeen, hl, onHl, selected, onSelect, onClose }: Props) {
+  const [tab, setTab] = useState<Tab>(() => { try { const t = localStorage.getItem('browseTab'); return t === 'new' || t === 'tree' || t === 'health' ? t : 'recent'; } catch { return 'recent'; } });
   useEffect(() => { try { localStorage.setItem('browseTab', tab); } catch {} }, [tab]);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const tree = useMemo(() => buildTree(notes), [notes]);
@@ -50,6 +51,7 @@ export default function Browse({ notes, byId, brokenLinks, selected, onSelect, o
   const toggle = (k: string) => setOpen(o => { const x = new Set(o); x.has(k) ? x.delete(k) : x.add(k); return x; });
 
   const recent = useMemo(() => [...notes].filter(n => n.mtime).sort((a, b) => b.mtime - a.mtime).slice(0, 80), [notes]);
+  const fresh = useMemo(() => notes.filter(n => changed.has(n.id)).sort((a, b) => b.mtime - a.mtime), [notes, changed]);
   const orphans = useMemo(() => notes.filter(n => !n.links.length && !n.backlinks.length), [notes]);
   const brokenBySource = useMemo(() => {
     const m = new Map<string, string[]>(); brokenLinks.forEach(b => m.set(b.from, [...(m.get(b.from) || []), b.target])); return [...m];
@@ -57,7 +59,7 @@ export default function Browse({ notes, byId, brokenLinks, selected, onSelect, o
 
   const row = (n: Note, extra?: string) => (
     <button key={n.id} className={'br-row' + (n.id === selected ? ' cur' : '')} onClick={() => onSelect(n.id)} title={n.path}>
-      <span className="br-title">{shortTitle(n.title)}</span>{extra && <small>{extra}</small>}
+      <span className="br-title">{changed.has(n.id) && <i className="new-dot" title="Updated since you last looked" />}{shortTitle(n.title)}</span>{extra && <small>{extra}</small>}
     </button>
   );
   const renderDir = (d: Dir, depth: number): React.ReactNode => {
@@ -78,6 +80,7 @@ export default function Browse({ notes, byId, brokenLinks, selected, onSelect, o
     <div className="browse" role="dialog" aria-label="Browse notes">
       <div className="br-head">
         <div className="seg" role="tablist">
+          <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>New{changed.size ? ` ${changed.size}` : ''}</button>
           <button className={tab === 'recent' ? 'on' : ''} onClick={() => setTab('recent')}>Recent</button>
           <button className={tab === 'tree' ? 'on' : ''} onClick={() => setTab('tree')}>Tree</button>
           <button className={tab === 'health' ? 'on' : ''} onClick={() => setTab('health')}>Health{brokenLinks.length + orphans.length > 0 ? ` ${brokenLinks.length + orphans.length}` : ''}</button>
@@ -85,6 +88,14 @@ export default function Browse({ notes, byId, brokenLinks, selected, onSelect, o
         <button className="icon-btn sm" onClick={onClose} aria-label="Close browse">&times;</button>
       </div>
       <div className="br-body">
+        {tab === 'new' && <>
+          <div className="br-tools">
+            <label title="Tint updated notes on the map"><input type="checkbox" checked={hl} onChange={e => onHl(e.target.checked)} /> Show on map</label>
+            <button className="link" onClick={onMarkAllSeen} disabled={!fresh.length}>Mark all seen</button>
+          </div>
+          {fresh.length === 0 && <div className="empty">Nothing changed since you last looked. Notes you open are marked seen; edits made after that show up here.</div>}
+          {fresh.map(n => row(n, `${n.section.split(' / ').pop()!.replace(/-/g, ' ')} \u00b7 ${ago(n.mtime)}`))}
+        </>}
         {tab === 'recent' && recent.map(n => {
           const g = group(n.mtime), head = g !== lastGroup ? <div key={'g' + g} className="br-group">{g}</div> : null; lastGroup = g;
           return <div key={n.id}>{head}{row(n, `${n.section.split(' / ').pop()!.replace(/-/g, ' ')} \u00b7 ${ago(n.mtime)}`)}</div>;

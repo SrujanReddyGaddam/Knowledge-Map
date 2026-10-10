@@ -188,3 +188,9 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .hovercard { position:fixed; z-index:70; width:320px; padding:12px 14px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:14px; box-shadow:0 14px 50px #0003; pointer-events:none; animation:fade .15s ease; display:flex; flex-direction:column; gap:4px; }
 .hovercard small { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); } .hovercard b { font-size:14px; line-height:1.3; }
 .hovercard span { font-size:12.5px; line-height:1.5; color:var(--mute); display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; } .hovercard em { font:10.5px var(--mono); font-style:normal; color:var(--mute); }
+
+/* updated-since-last-visit markers */
+.new-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align:1px; flex:none; }
+.br-tools { display:flex; justify-content:space-between; align-items:center; padding:8px 14px 4px; font:10.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--mute); }
+.br-tools label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; } .br-tools input { accent-color:var(--accent); margin:0; }
+.br-tools .link { all:unset; cursor:pointer; text-decoration:underline; text-underline-offset:3px; color:var(--ink); } .br-tools .link:disabled { opacity:.35; cursor:default; text-decoration:none; }

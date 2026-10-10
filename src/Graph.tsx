@@ -7,7 +7,7 @@ import { shortTitle } from './util';
 import type { Colors } from './palettes';
 
 type GNode = { id: string; note: Note; tx?: number; ty?: number; tz?: number; R0: number; show: number; showT: number; x: number; y: number; z: number; fx?: number | null; fy?: number | null; fz?: number | null; r: number; t: number; R: number; hov: number; dim: number; lab: number; sx: number; sy: number; sr: number; wz: number; front: number; p: [number, number, number] };
-type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; hide: boolean; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
+type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; hide: boolean; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
 
 const SPHERE = 330, DEFAULT_DIST = 1080, FOV = 46;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -245,7 +245,7 @@ export default function Graph(props: Props) {
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
-      const { selectedId, colors: c, matchIds } = live.current;
+      const { selectedId, colors: c, matchIds, markIds } = live.current;
       const ease = 1 - Math.exp(-dt * 10), fast = 1 - Math.exp(-dt * 14);
 
       // rotation: inertia after a drag, then a slow idle spin
@@ -294,11 +294,12 @@ export default function Graph(props: Props) {
 
       // discs, painted back to front; far ones grow and fade like out-of-focus bokeh
       [...nodes].sort((a, b) => a.wz - b.wz).forEach((n, i) => {
-        const s = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * (1 + n.hov * 0.12) * smooth(n.show);
+        const marked = !!markIds && markIds.has(n.id);
+        const s = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * (1 + n.hov * 0.12 + (marked ? 0.18 : 0)) * smooth(n.show);
         m4.compose(v3.set(n.p[0], n.p[1], n.p[2]), qI, sc.set(s, s, 1)); discs.setMatrixAt(i, m4);
         const f = smooth(n.front);
         tmp.copy(farTone).lerp(nearTone, f * (0.35 + 0.65 * Math.pow(n.t, 0.6))).lerp(bg, clamp(n.dim * 0.5 + (1 - f) * 0.35, 0, 1));
-        tmp.lerp(accent, n.hov * 0.7).lerp(bg, 1 - n.show); discs.setColorAt(i, tmp);
+        tmp.lerp(accent, Math.max(n.hov * 0.7, marked ? 0.85 : 0)).lerp(bg, 1 - n.show); discs.setColorAt(i, tmp);
       });
       discs.instanceMatrix.needsUpdate = true; discs.instanceColor!.needsUpdate = true;
 
