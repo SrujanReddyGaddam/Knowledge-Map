@@ -2,12 +2,19 @@
 // Re-reads on any vault change (live reload) and serves/copies vault images under /vault-assets/<vaultIndex>/<name>.
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import LZString from 'lz-string';
 import type { Plugin } from 'vite';
 
-type VaultCfg = { name?: string; path: string; exclude?: string[]; rootSection?: string };
+type VaultCfg = { name?: string; path: string; exclude?: string[]; rootSection?: string; writable?: boolean };
 type Config = { vaults?: VaultCfg[]; vault?: string; exclude?: string[]; rootSection?: string };
+// Port, config and backup location can be overridden by env so tests can run a throwaway instance beside the real one.
+const PORT = Number(process.env.KM_PORT) || 7777;
+const HOSTS = new Set([`localhost:${PORT}`, `knowledge.localhost:${PORT}`]);          // Host allowlist (blocks DNS rebinding)
+const ORIGINS = new Set([...HOSTS].map(h => `http://${h}`));
+const BACKUP_DIR = process.env.KM_BACKUP_DIR || path.join(os.homedir(), '.knowledge-map', 'backups');
+const MAX_EDIT_BYTES = 2 * 1024 * 1024, KEEP_VERSIONS = 50, KEEP_DAYS = 90;
 const IMG = /\.(png|jpe?g|gif|svg|webp)$/i;
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp' };
 
@@ -59,15 +66,15 @@ function summaryOf(body: string) {
     .replace(/^(.{140,320}?[.!?])\s.*$/, '$1').slice(0, 320);
 }
 
-function vaultList(cfg: Config): Required<Pick<VaultCfg, 'name' | 'path' | 'exclude' | 'rootSection'>>[] {
+function vaultList(cfg: Config): Required<Pick<VaultCfg, 'name' | 'path' | 'exclude' | 'rootSection' | 'writable'>>[] {
   const list: VaultCfg[] = cfg.vaults?.length ? cfg.vaults : [{ path: cfg.vault!, exclude: cfg.exclude, rootSection: cfg.rootSection }];
-  return list.map(v => ({ name: v.name || path.basename(v.path), path: v.path, exclude: v.exclude || [], rootSection: v.rootSection || 'General' }));
+  return list.map(v => ({ name: v.name || path.basename(v.path), path: v.path, exclude: v.exclude || [], rootSection: v.rootSection || 'General', writable: v.writable === true }));
 }
 
 type RawNote = {
   vi: number; vault: string; base: string; path: string; abs: string; folder: string; title: string; tags: string[]; status: string; source: string; fetched: string;
   summary: string; body: string; related: string[]; rawLinks: string[]; id: string; links: string[]; backlinks: string[]; section: string;
-  kind?: 'drawing'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number;
+  kind?: 'drawing'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number; writable: boolean;
 };
 
 // Excalidraw: the Obsidian plugin stores the scene LZ-compressed inside a ```compressed-json block; raw .excalidraw files are plain JSON.
@@ -127,7 +134,7 @@ function loadVaults(cfg: Config) {
         source: fm.source && fm.source !== 'none' ? String(fm.source) : '', fetched: String(fm.source_fetched || fm.updated || fm.date || ''),
         summary: scene ? `Excalidraw drawing, ${scene.elements.length} elements.${drawingText ? ' ' + drawingText.trim().split(/\n+/)[0].slice(0, 90) : ''}` : (typeof fm.summary === 'string' && fm.summary ? fm.summary.slice(0, 320) : summaryOf(body)),
         ...(scene ? { kind: 'drawing' as const, scene } : {}),
-        mtime, body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: [...wikilinks(body), ...mdlinks(body)], links: [], backlinks: [],
+        mtime, writable: v.writable && !scene && f.endsWith('.md'), body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: [...wikilinks(body), ...mdlinks(body)], links: [], backlinks: [],
       });
     }
   });
@@ -174,7 +181,8 @@ function loadVaults(cfg: Config) {
 }
 
 export default function vault(): Plugin {
-  const cfg: Config = JSON.parse(fs.readFileSync(path.resolve('config.json'), 'utf8'));
+  const cfg: Config = JSON.parse(fs.readFileSync(path.resolve(process.env.KM_CONFIG || 'config.json'), 'utf8'));
+  const TOKEN = crypto.randomBytes(24).toString('hex');   // per server start; only our own page can obtain it (see guard)
   const ID = 'virtual:vault', RID = '\0' + ID;
   let current = loadVaults(cfg);
   const report = () => console.log(`[vault] ${current.data.vaults.join(', ')}: ${current.data.notes.length} notes, ${current.data.edges.length} links, ${current.data.broken.length} unresolved`);
@@ -199,31 +207,122 @@ export default function vault(): Plugin {
         }, 700);
       };
       server.watcher.on('change', onChange).on('add', onChange).on('unlink', onChange);
-      // The only write path: move one note to the macOS Trash (recoverable). The client sends a note id, never a path.
-      // CSRF guard: localhost servers are reachable from any web page, so require our own Origin and a custom header (forces a CORS preflight we never answer).
-      server.middlewares.use('/api/delete', (req, res) => {
-        const send = (code: number, body: object) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); };
-        const origin = req.headers.origin || '';
-        if (req.method !== 'POST' || req.headers['x-km'] !== '1' || !/^http:\/\/(knowledge\.)?localhost:7777$/.test(origin)) return send(403, { error: 'forbidden' });
-        let raw = '';
-        req.on('data', c => { raw += c; if (raw.length > 4096) req.destroy(); });
-        req.on('end', () => {
-          try {
-            const { id } = JSON.parse(raw || '{}');
-            const n = current.data.notes.find((x: { id: string }) => x.id === id);
-            if (!n) return send(404, { error: 'unknown note' });
-            const root = current.vaults.find(v => v.name === n.vault)?.path;
-            const abs = path.resolve(n.abs);
-            if (!root || !abs.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(abs)) return send(400, { error: 'file not inside a vault' });
-            const trash = path.join(os.homedir(), '.Trash');
-            const ext = path.extname(abs);
-            let dest = path.join(trash, path.basename(abs));
-            if (fs.existsSync(dest)) dest = path.join(trash, `${path.basename(abs, ext)} ${Date.now()}${ext}`);
-            try { fs.renameSync(abs, dest); } catch { fs.copyFileSync(abs, dest); fs.unlinkSync(abs); }
-            console.log(`[vault] trashed ${abs} -> ${dest}`);
-            send(200, { ok: true, trashedTo: dest });
-          } catch (e) { send(500, { error: String((e as Error).message || e) }); }
+      // ---- write paths -------------------------------------------------------------------------------------------
+      // Localhost servers are reachable from any web page in the browser, so every /api call must pass guard():
+      //  - Host must be ours (blocks DNS rebinding), X-KM header (forces a CORS preflight we never answer, so other origins cannot send it),
+      //  - writes also need our own Origin and the per-start token, which only our page can fetch (cross-origin pages cannot read /api/session).
+      const send = (res: import('node:http').ServerResponse, code: number, body: object) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
+      const safeEq = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+      const guard = (req: import('node:http').IncomingMessage, o: { post: boolean; token: boolean }) => {
+        if (!HOSTS.has(String(req.headers.host || '').toLowerCase())) return 'bad host';
+        if (req.headers['x-km'] !== '1') return 'forbidden';
+        if (o.post && !ORIGINS.has(String(req.headers.origin || ''))) return 'forbidden';
+        if (o.token && !safeEq(String(req.headers['x-km-token'] || ''), TOKEN)) return 'bad token';
+        return null;
+      };
+      const readBody = (req: import('node:http').IncomingMessage, max: number) => new Promise<string>((resolve, reject) => {
+        let raw = '', size = 0;
+        // past the limit keep draining without storing, so the client gets a clean 413 instead of a dropped connection
+        req.on('data', c => { size += c.length; if (size <= max) raw += c; });
+        req.on('end', () => (size > max ? reject(new Error('too large')) : resolve(raw))); req.on('error', reject);
+      });
+      const sha = (b: Buffer | string) => crypto.createHash('sha256').update(b).digest('hex');
+      type Found = { err: [number, string] } | { n: any; abs: string; root: string };
+      // note id -> real file inside a writable vault; the client never supplies a path
+      const editable = (id: unknown): Found => {
+        const n = typeof id === 'string' ? current.data.notes.find((x: { id: string }) => x.id === id) : null;
+        if (!n) return { err: [404, 'unknown note'] };
+        const root = current.vaults.find(v => v.name === n.vault);
+        if (!root || !root.writable) return { err: [403, 'vault is read-only (set "writable": true in config.json)'] };
+        if (n.kind === 'drawing' || !/\.md$/i.test(n.abs)) return { err: [400, 'only markdown notes can be edited'] };
+        try {
+          const real = fs.realpathSync(n.abs), rootReal = fs.realpathSync(root.path);
+          if (!real.startsWith(rootReal + path.sep)) return { err: [400, 'file not inside the vault'] };
+          if (fs.statSync(real).size > MAX_EDIT_BYTES) return { err: [413, 'file too large to edit'] };
+          return { n, abs: real, root: rootReal };
+        } catch { return { err: [404, 'file not found on disk (iCloud not downloaded?)'] }; }
+      };
+      const backupDirFor = (vault: string, rel: string) => path.join(BACKUP_DIR, vault.replace(/[^\w.-]/g, '_'), rel + '.history');
+      const prune = (dir: string) => {
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort();          // names are sortable timestamps
+        const cutoff = Date.now() - KEEP_DAYS * 864e5;
+        files.slice(0, -1).forEach((f, i) => {                                             // always keep the newest
+          const old = files.length - i > KEEP_VERSIONS || fs.statSync(path.join(dir, f)).mtimeMs < cutoff;
+          if (old) fs.unlinkSync(path.join(dir, f));
         });
+      };
+
+      server.middlewares.use('/api/session', (req, res) => {
+        const bad = guard(req, { post: false, token: false });
+        if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        send(res, 200, { token: TOKEN });
+      });
+
+      // Exact file text for the editor (frontmatter included, line endings untouched) plus a hash used for conflict detection.
+      server.middlewares.use('/api/raw', (req, res) => {
+        const bad = guard(req, { post: false, token: true });
+        if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        const f = editable(new URL(req.url || '/', 'http://x').searchParams.get('id'));
+        if ('err' in f) return send(res, f.err[0], { error: f.err[1] });
+        try { const buf = fs.readFileSync(f.abs); send(res, 200, { text: buf.toString('utf8'), hash: sha(buf), mtime: fs.statSync(f.abs).mtimeMs }); }
+        catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }
+      });
+
+      // Save: refuse if the file changed since it was loaded (409), back up the old version first, then write atomically (temp file + fsync + rename).
+      server.middlewares.use('/api/save', async (req, res) => {
+        const bad = guard(req, { post: true, token: true });
+        if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        let tmp = '';
+        try {
+          if (Number(req.headers['content-length'] || 0) > MAX_EDIT_BYTES + 4096) { res.setHeader('Connection', 'close'); return send(res, 413, { error: 'file too large to edit' }); }
+          const { id, text, baseHash, force } = JSON.parse(await readBody(req, MAX_EDIT_BYTES + 4096) || '{}');
+          if (typeof text !== 'string' || typeof baseHash !== 'string') return send(res, 400, { error: 'bad request' });
+          if (Buffer.byteLength(text) > MAX_EDIT_BYTES) return send(res, 413, { error: 'file too large to edit' });
+          const f = editable(id);
+          if ('err' in f) return send(res, f.err[0], { error: f.err[1] });
+          const cur = fs.readFileSync(f.abs), curHash = sha(cur), st = fs.statSync(f.abs);
+          if (curHash !== baseHash && force !== true) return send(res, 409, { error: 'conflict', text: cur.toString('utf8'), hash: curHash, mtime: st.mtimeMs });
+          const next = Buffer.from(text, 'utf8');
+          if (next.equals(cur)) return send(res, 200, { ok: true, unchanged: true, hash: curHash, mtime: st.mtimeMs });
+          // 1. backup of what is on disk right now
+          const dir = backupDirFor(f.n.vault, path.relative(f.root, f.abs));
+          fs.mkdirSync(dir, { recursive: true });
+          const bname = new Date().toISOString().replace(/[:.]/g, '-') + '.md';
+          fs.writeFileSync(path.join(dir, bname), cur, { flag: 'wx' });
+          // 2. atomic replace: dotfile temp in the same folder (ignored by the vault scan), same mode, flushed before the rename
+          tmp = path.join(path.dirname(f.abs), `.${path.basename(f.abs)}.km-tmp-${process.pid}-${Date.now()}`);
+          const fd = fs.openSync(tmp, 'wx', st.mode & 0o777);
+          try { fs.writeSync(fd, next); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+          fs.renameSync(tmp, f.abs); tmp = '';
+          try { prune(dir); } catch {}
+          const after = fs.statSync(f.abs);
+          console.log(`[vault] saved ${f.abs} (backup ${bname})`);
+          send(res, 200, { ok: true, hash: sha(next), mtime: after.mtimeMs, backup: bname });
+        } catch (e) {
+          if (tmp) try { fs.unlinkSync(tmp); } catch {}
+          send(res, (e as Error).message === 'too large' ? 413 : 500, { error: String((e as Error).message || e) });
+        }
+      });
+
+      // Move one note to the macOS Trash (recoverable). Same guard as the other write paths except the token (client wiring comes with the editor).
+      server.middlewares.use('/api/delete', async (req, res) => {
+        const bad = guard(req, { post: true, token: false });
+        if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        try {
+          const { id } = JSON.parse(await readBody(req, 4096) || '{}');
+          const n = current.data.notes.find((x: { id: string }) => x.id === id);
+          if (!n) return send(res, 404, { error: 'unknown note' });
+          const root = current.vaults.find(v => v.name === n.vault)?.path;
+          const abs = path.resolve(n.abs);
+          if (!root || !abs.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(abs)) return send(res, 400, { error: 'file not inside a vault' });
+          const trash = path.join(os.homedir(), '.Trash');
+          const ext = path.extname(abs);
+          let dest = path.join(trash, path.basename(abs));
+          if (fs.existsSync(dest)) dest = path.join(trash, `${path.basename(abs, ext)} ${Date.now()}${ext}`);
+          try { fs.renameSync(abs, dest); } catch { fs.copyFileSync(abs, dest); fs.unlinkSync(abs); }
+          console.log(`[vault] trashed ${abs} -> ${dest}`);
+          send(res, 200, { ok: true, trashedTo: dest });
+        } catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }
       });
       server.middlewares.use('/vault-assets', (req, res, next) => {
         const [vi, ...rest] = (req.url || '').slice(1).split('/');
