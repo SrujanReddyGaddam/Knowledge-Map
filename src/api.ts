@@ -18,3 +18,6 @@ async function call(path: string, body?: object): Promise<Reply> {
 export const rawNote = (id: string) => call('/api/raw?id=' + encodeURIComponent(id));
 export const saveNote = (id: string, text: string, baseHash: string, force = false) => call('/api/save', { id, text, baseHash, force });
 export const trashNote = (id: string) => call('/api/delete', { id });
+export type Version = { name: string; time: string; size: number };
+export const historyOf = (id: string) => call('/api/history?id=' + encodeURIComponent(id));
+export const versionOf = (id: string, name: string) => call('/api/version?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name));

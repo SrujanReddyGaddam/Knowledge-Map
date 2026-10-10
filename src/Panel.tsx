@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import Drawing from './Drawing';
 import Editor, { type Draft } from './Editor';
+import History from './History';
 import type { Note } from 'virtual:vault';
 import { esc, restTitle, shortTitle } from './util';
 
@@ -30,6 +31,8 @@ const mention = (from: Note, target: Note) => {
 
 export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onClose, onDelete, focusId, onFocus, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
   const [tocOpen, setTocOpen] = useState(false);
+  const [hist, setHist] = useState(false);
+  useEffect(() => { setHist(false); }, [note?.id]);
   const [card, setCard] = useState<{ id: string; x: number; y: number } | null>(null);
   const cardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showCard = (el: HTMLElement) => {
@@ -114,7 +117,12 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               <button className="icon-btn" onClick={onMax} aria-label={maxed ? 'Exit full screen' : 'Full screen'} title={maxed ? 'Exit full screen (Esc)' : 'Full screen'}>{maxed ? '\u2923' : '\u2922'}</button>
               <span className="idx"><b>{index + 1}</b> / {total}</span><button className="icon-btn" onClick={onClose} aria-label="Close">&times;</button></span>
           </header>
-          {editing && note.writable ? (
+          {hist && note.writable && !editing ? (
+            <div className="p-body editing" key={'hist-' + note.id}>
+              <div className="ed-title">{shortTitle(note.title)}<small>{note.path}</small></div>
+              <History note={note} onClose={() => setHist(false)} onRestored={mt => onSaved(note.id, mt)} />
+            </div>
+          ) : editing && note.writable ? (
             <div className="p-body editing" key={'edit-' + note.id}>
               <div className="ed-title">{shortTitle(note.title)}<small>{note.path}</small></div>
               <Editor note={note} draft={draft} onEnd={onEditEnd} onSaved={mt => onSaved(note.id, mt)} onDirty={onDirty} />
@@ -153,6 +161,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             <section><div className="label">File</div><div className="src muted" title="Full path">{note.abs}</div></section>
             <div className="actions">
               {note.writable && <button className="btn" onClick={onEdit} title="Edit this note's markdown (e)">Edit</button>}
+              {note.writable && <button className="btn" onClick={() => setHist(true)} title="Saved versions of this note, compare and restore">History</button>}
               <a className="btn primary" href={obsidian}>Open in Obsidian</a>
               <button className="btn" onClick={() => onFocus(focusId === note.id ? null : note.id)} title="Show only this note and its neighbours on the map">{focusId === note.id ? 'Clear focus' : 'Focus on map'}</button>
               <button className="btn" onClick={() => { if (!note.abs) { location.reload(); return; } copy('path', note.abs); }} title={note.abs}>{copied === 'path' ? 'Path copied' : 'Copy path'}</button>
@@ -169,7 +178,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             {delErr && <div className="src muted" style={{ color: '#c0392b', marginTop: 8 }}>Delete failed: {delErr}</div>}
           </div>
           )}
-          {!(editing && note.writable) && <nav className="p-nav">
+          {!(editing && note.writable) && !(hist && note.writable) && <nav className="p-nav">
             <button onClick={() => prev && onNav(prev.id)}><span>&#8592;</span><div><small>Prev</small>{prev ? shortTitle(prev.title) : ''}</div></button>
             <button onClick={() => next && onNav(next.id)} className="right"><div><small>Next</small>{next ? shortTitle(next.title) : ''}</div><span>&#8594;</span></button>
           </nav>}

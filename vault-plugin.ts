@@ -309,6 +309,31 @@ export default function vault(): Plugin {
         }
       });
 
+      // History: saved versions of one note (newest first) and the text of one version. Names are validated, never used as paths.
+      const BNAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.md$/;
+      const histDir = (f: { n: any; abs: string; root: string }) => backupDirFor(f.n.vault, path.relative(f.root, f.abs));
+      server.middlewares.use('/api/history', (req, res) => {
+        const bad = guard(req, { post: false, token: true });
+        if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        const f = editable(new URL(req.url || '/', 'http://x').searchParams.get('id'));
+        if ('err' in f) return send(res, f.err[0], { error: f.err[1] });
+        try {
+          const dir = histDir(f);
+          const names = fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => BNAME.test(n)).sort().reverse() : [];
+          send(res, 200, { versions: names.map(name => ({ name, time: name.replace(/\.md$/, '').replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z/, 'T$1:$2:$3.$4Z'), size: fs.statSync(path.join(dir, name)).size })) });
+        } catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }
+      });
+      server.middlewares.use('/api/version', (req, res) => {
+        const bad = guard(req, { post: false, token: true });
+        if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        const q = new URL(req.url || '/', 'http://x').searchParams, name = q.get('name') || '';
+        const f = editable(q.get('id'));
+        if ('err' in f) return send(res, f.err[0], { error: f.err[1] });
+        if (!BNAME.test(name)) return send(res, 400, { error: 'bad version name' });
+        try { send(res, 200, { text: fs.readFileSync(path.join(histDir(f), name), 'utf8') }); }
+        catch { send(res, 404, { error: 'version not found' }); }
+      });
+
       // Move one note to the macOS Trash (recoverable). Same guard as the other write paths.
       server.middlewares.use('/api/delete', async (req, res) => {
         const bad = guard(req, { post: true, token: true });

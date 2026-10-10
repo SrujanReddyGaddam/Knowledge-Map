@@ -209,3 +209,15 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .ed-conflict-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; } .ed-conflict .btn { padding:4px 12px; font-size:12px; }
 .ed-theirs { margin-top:10px; width:100%; height:160px; resize:vertical; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); padding:10px; font:12px/1.5 var(--mono); }
 .ed-err { flex:none; color:#b3392b; font-size:13px; } .ed-msg { padding:30px 0; color:var(--mute); font-size:13px; }
+
+/* history */
+.hist { flex:1; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:auto; scrollbar-width:thin; }
+.hist-list { display:flex; flex-direction:column; border:1px solid var(--line); border-radius:12px; overflow:auto; max-height:34%; flex:none; }
+.hist-row { all:unset; box-sizing:border-box; display:flex; justify-content:space-between; gap:10px; padding:7px 14px; cursor:pointer; font:12.5px var(--mono); } .hist-row small { color:var(--mute); font:11px var(--mono); }
+.hist-row:hover, .hist-row.cur { background:var(--soft); } .hist-row.cur { font-weight:600; }
+.hist-view { display:flex; flex-direction:column; gap:10px; min-height:0; flex:1; }
+.hist-head { display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:12.5px; color:var(--mute); flex-wrap:wrap; } .hist-head .btn { padding:5px 14px; }
+.hist-head .add, .diff .add { color:#2f7a45; } .hist-head .del, .diff .del { color:#b3392b; }
+.diff { margin:0; flex:1; min-height:120px; overflow:auto; border:1px solid var(--line); border-radius:12px; background:var(--bg); padding:10px 0; font:calc(12px * var(--fs, 1))/1.55 var(--mono); white-space:pre-wrap; word-break:break-word; }
+.diff div { padding:0 14px; } .diff .add { background:#2f7a4518; } .diff .del { background:#b3392b18; } .diff .gap { color:var(--mute); font-style:italic; padding:4px 14px; }
+.hist-done { color:#2f7a45; font-size:13px; }
