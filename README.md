@@ -26,7 +26,7 @@ Point your coding agent (Claude Code, Codex, Cursor, ...) at this repo and say, 
 Then open http://knowledge.localhost:7777. Logs: `~/Library/Logs/knowledge-map.log`. Restart after editing `config.json` or `vault-plugin.ts`: `launchctl kickstart -k gui/$(id -u)/com.knowledge-map`. If a vault shows 0 notes, give the `node` binary Full Disk Access (System Settings > Privacy & Security), then restart. If you upgrade Node with nvm, rerun the install script.
 
 ## Notes
-- Read-only on your vaults by default. Set `"writable": true` on a vault in `config.json` to allow editing its markdown notes: saves are atomic, back up the previous version to `~/.knowledge-map/backups` first, and refuse to overwrite a file that changed on disk meanwhile. The Delete button in the note panel moves a note to your Trash.
+- Read-only on your vaults by default. Set `"writable": true` on a vault in `config.json` to allow editing its markdown notes: saves are atomic, back up the previous version to `~/.knowledge-map/backups` first, and refuse to overwrite a file that changed on disk meanwhile. Open a note and press `e` (or the Edit button), Cmd+S to save. The Delete button in the note panel moves a note to your Trash.
 - Port 7777 is fixed (see AGENTS.md to change it).
 - Not supported: `.canvas`, `.base`, PDF embeds, running Dataview queries.
 - Keep this app private if your vaults hold sensitive material; the code is safe to share, your notes are not.

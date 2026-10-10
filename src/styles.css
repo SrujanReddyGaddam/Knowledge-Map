@@ -194,3 +194,18 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .br-tools { display:flex; justify-content:space-between; align-items:center; padding:8px 14px 4px; font:10.5px var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--mute); }
 .br-tools label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; } .br-tools input { accent-color:var(--accent); margin:0; }
 .br-tools .link { all:unset; cursor:pointer; text-decoration:underline; text-underline-offset:3px; color:var(--ink); } .br-tools .link:disabled { opacity:.35; cursor:default; text-decoration:none; }
+
+/* editor */
+.p-body.editing { display:flex; flex-direction:column; padding-top:14px; padding-bottom:16px; overflow:hidden; animation:none; }
+.ed-title { font-weight:700; font-size:15px; margin-bottom:10px; } .ed-title small { display:block; font:11px var(--mono); color:var(--mute); font-weight:400; margin-top:2px; word-break:break-all; }
+.editor { flex:1; min-height:0; display:flex; flex-direction:column; gap:10px; }
+.ed-bar { display:flex; align-items:center; gap:10px; flex:none; flex-wrap:wrap; }
+.ed-status { font:11px var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--mute); } .ed-status.dirty { color:var(--ink); }
+.ed-hint { margin-left:auto; font:10.5px var(--mono); color:var(--mute); letter-spacing:.04em; }
+.ed-bar .btn { padding:5px 14px; } .btn:disabled { opacity:.4; cursor:default; }
+.ed-area { flex:1; min-height:200px; width:100%; resize:none; border:1px solid var(--line); border-radius:12px; background:var(--bg); color:var(--ink); padding:14px 16px; font:calc(13px * var(--fs, 1))/1.65 var(--mono); outline:none; tab-size:2; }
+.ed-area:focus { border-color:var(--ink); }
+.ed-conflict { flex:none; border:1px solid #b3392b66; background:#b3392b12; border-radius:12px; padding:12px 14px; font-size:13px; line-height:1.5; }
+.ed-conflict-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; } .ed-conflict .btn { padding:4px 12px; font-size:12px; }
+.ed-theirs { margin-top:10px; width:100%; height:160px; resize:vertical; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); padding:10px; font:12px/1.5 var(--mono); }
+.ed-err { flex:none; color:#b3392b; font-size:13px; } .ed-msg { padding:30px 0; color:var(--mute); font-size:13px; }

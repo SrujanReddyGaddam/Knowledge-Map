@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import { createRoot, type Root } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import Drawing from './Drawing';
+import Editor, { type Draft } from './Editor';
 import type { Note } from 'virtual:vault';
 import { esc, restTitle, shortTitle } from './util';
 
@@ -11,6 +12,7 @@ type Props = {
   open: boolean; note: Note | null; index: number; total: number; byId: Map<string, Note>; resolve: (from: Note, name: string) => Note | undefined;
   prev: Note | null; next: Note | null; onNav: (id: string) => void; onTag: (t: string) => void; onClose: () => void; onDelete: (id: string) => Promise<string | null>;
   focusId: string | null; onFocus: (id: string | null) => void;
+  editing: boolean; draft: Draft | null; onEdit: () => void; onEditEnd: (saved: boolean) => void; onSaved: (id: string, mtime: number) => void; onDirty: (d: boolean) => void;
 };
 
 type Toc = { id: string; text: string; level: number }[];
@@ -26,7 +28,7 @@ const mention = (from: Note, target: Note) => {
   return t.length > 170 ? t.slice(0, 168) + '..' : t;
 };
 
-export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onClose, onDelete, focusId, onFocus }: Props) {
+export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onClose, onDelete, focusId, onFocus, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
   const [tocOpen, setTocOpen] = useState(false);
   const [card, setCard] = useState<{ id: string; x: number; y: number } | null>(null);
   const cardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,6 +114,12 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               <button className="icon-btn" onClick={onMax} aria-label={maxed ? 'Exit full screen' : 'Full screen'} title={maxed ? 'Exit full screen (Esc)' : 'Full screen'}>{maxed ? '\u2923' : '\u2922'}</button>
               <span className="idx"><b>{index + 1}</b> / {total}</span><button className="icon-btn" onClick={onClose} aria-label="Close">&times;</button></span>
           </header>
+          {editing && note.writable ? (
+            <div className="p-body editing" key={'edit-' + note.id}>
+              <div className="ed-title">{shortTitle(note.title)}<small>{note.path}</small></div>
+              <Editor note={note} draft={draft} onEnd={onEditEnd} onSaved={mt => onSaved(note.id, mt)} onDirty={onDirty} />
+            </div>
+          ) : (
           <div className="p-body" ref={bodyRef} key={note.id} onScroll={hideCard}>
             <h1 className="p-title">{shortTitle(note.title)}</h1>
             {sub && <div className="p-sub">{sub}</div>}
@@ -144,6 +152,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             {note.source && <section><div className="label">Source</div><div className="src">{/^https?:/.test(note.source) ? <a href={note.source} target="_blank" rel="noreferrer">{note.source}</a> : note.source}</div></section>}
             <section><div className="label">File</div><div className="src muted" title="Full path">{note.abs}</div></section>
             <div className="actions">
+              {note.writable && <button className="btn" onClick={onEdit} title="Edit this note's markdown (e)">Edit</button>}
               <a className="btn primary" href={obsidian}>Open in Obsidian</a>
               <button className="btn" onClick={() => onFocus(focusId === note.id ? null : note.id)} title="Show only this note and its neighbours on the map">{focusId === note.id ? 'Clear focus' : 'Focus on map'}</button>
               <button className="btn" onClick={() => { if (!note.abs) { location.reload(); return; } copy('path', note.abs); }} title={note.abs}>{copied === 'path' ? 'Path copied' : 'Copy path'}</button>
@@ -159,10 +168,11 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             </div>
             {delErr && <div className="src muted" style={{ color: '#c0392b', marginTop: 8 }}>Delete failed: {delErr}</div>}
           </div>
-          <nav className="p-nav">
+          )}
+          {!(editing && note.writable) && <nav className="p-nav">
             <button onClick={() => prev && onNav(prev.id)}><span>&#8592;</span><div><small>Prev</small>{prev ? shortTitle(prev.title) : ''}</div></button>
             <button onClick={() => next && onNav(next.id)} className="right"><div><small>Next</small>{next ? shortTitle(next.title) : ''}</div><span>&#8594;</span></button>
-          </nav>
+          </nav>}
         </>
       )}
       {card && byId.get(card.id) && createPortal((() => {

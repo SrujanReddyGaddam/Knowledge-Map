@@ -4,6 +4,8 @@ import Graph from './Graph';
 import Panel from './Panel';
 import Browse from './Browse';
 import { loadSeen, saveSeen, type Seen } from './seen';
+import { trashNote } from './api';
+import { readDraft, clearDraft, type Draft } from './Editor';
 import { shortTitle } from './util';
 import { play, tick, VARIANTS, setVolume } from './sound';
 import { PALETTES, applyColors } from './palettes';
@@ -26,7 +28,15 @@ const allTags: [string, number][] = (() => { const m = new Map<string, number>()
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
-  const [selected, setSelected] = useState<string | null>(hashId);
+  // an unsaved draft (kept in sessionStorage) reopens the editor after a reload
+  const [draft] = useState<Draft | null>(() => { const d = readDraft(); const n = d && byId.get(d.id); return d && n && n.writable && (hashId() === null || hashId() === d.id) ? d : null; });
+  const draftRef = useRef<Draft | null>(draft);                  // handed to the editor once; cleared when editing ends so a later edit starts from disk
+  const [selected, setSelected] = useState<string | null>(() => hashId() ?? draft?.id ?? null);
+  const [editId, setEditId] = useState<string | null>(draft?.id ?? null);
+  const editIdRef = useRef(editId); editIdRef.current = editId;
+  const dirtyRef = useRef(false), staleRef = useRef(false);      // dirtyRef: unsaved edits; staleRef: our own save happened, data refreshes when editing ends
+  const reloadSoon = () => setTimeout(() => location.reload(), 50);
+  const endEdit = useCallback(() => { setEditId(null); draftRef.current = null; dirtyRef.current = false; if (staleRef.current) { staleRef.current = false; reloadSoon(); } }, []);
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark');
   const saved = useRef<{ q?: string; section?: string | null; tags?: string[]; vaults?: string[]; focus?: { id: string; hops: 1 | 2 } | null }>((() => { try { return JSON.parse(sessionStorage.getItem('filters') || '{}'); } catch { return {}; } })()).current;
   const [query, setQuery] = useState(() => new URLSearchParams(location.search).get('q') ?? saved.q ?? '');
@@ -66,7 +76,9 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('soundId', soundId); } catch {} }, [soundId]);
   useEffect(() => { const f = () => setVw(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
 
-  const select = useCallback((id: string | null) => { if (id && soundRef.current !== 'off') play(soundRef.current); setSelected(id); history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname); }, []);
+  const select = useCallback((id: string | null) => {
+    if (editIdRef.current && id !== editIdRef.current) { if (dirtyRef.current && !confirm('You have unsaved changes. Discard them?')) return; clearDraft(); endEdit(); }
+    if (id && soundRef.current !== 'off') play(soundRef.current); setSelected(id); history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname); }, [endEdit]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch {} }, [dark]);
 
   const q = query.trim();
@@ -105,14 +117,14 @@ export default function App() {
   const idx = selected ? navOrder.indexOf(selected) : -1;
   const deleteNote = useCallback(async (id: string) => {
     try {
-      const r = await fetch('/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-KM': '1' }, body: JSON.stringify({ id }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) return j.error || 'HTTP ' + r.status;
+      const r = await trashNote(id);
+      if (r.status !== 200) return r.json.error || 'HTTP ' + r.status;
       setSelected(null); history.replaceState(null, '', location.pathname);
       return null;
     } catch (e) { return String(e); }
   }, []);
   const note = selected ? byId.get(selected)! : null;
+  const selNote = note;
   // opening a note marks its current version as seen
   useEffect(() => { if (note && changed.has(note.id)) setSeenState(s => ({ ...s, seen: { ...s.seen, [note.id]: note.mtime } })); }, [note, changed]);
   const prev = idx >= 0 ? byId.get(navOrder[(idx - 1 + navOrder.length) % navOrder.length])! : null;
@@ -129,17 +141,27 @@ export default function App() {
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      const typing = document.activeElement instanceof HTMLInputElement;
+      const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); const el = document.getElementById('search') as HTMLInputElement | null; el?.focus(); el?.select(); return; }
       if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else select(null); }
       else if (typing) return;
       else if (e.key === '/') { e.preventDefault(); document.getElementById('search')?.focus(); }
       else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) setBrowse(v => !v);
+      else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && selNote?.writable && selNote.kind !== 'drawing') { e.preventDefault(); setEditId(selNote.id); }
       else if (e.key === 'ArrowRight' && next) select(next.id);
       else if (e.key === 'ArrowLeft' && prev) select(prev.id);
     };
     addEventListener('keydown', k); return () => removeEventListener('keydown', k);
-  }, [next, prev, select]);
+  }, [next, prev, select, selNote]);
+  // warn before closing the tab with unsaved edits; our own saves refresh the data once editing ends, external changes reload as before
+  useEffect(() => {
+    const bu = (e: BeforeUnloadEvent) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ''; } };
+    addEventListener('beforeunload', bu);
+    const hot = (import.meta as any).hot;
+    const own = () => { if (editIdRef.current) staleRef.current = true; else reloadSoon(); };
+    hot?.on('km:self-write', own);
+    return () => { removeEventListener('beforeunload', bu); hot?.off?.('km:self-write', own); };
+  }, []);
 
   const scopeSeg = (
     <div className="seg" role="group" aria-label="Search in">
@@ -262,7 +284,7 @@ export default function App() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2 6h2.5L8 3v10L4.5 10H2z" />{soundId !== 'off' ? <><path d="M10.5 5.5a3.5 3.5 0 0 1 0 5" /><path d="M12.5 3.5a6.5 6.5 0 0 1 0 9" /></> : <path d="M11 6l3.5 4M14.5 6L11 10" />}</svg>
         </button>
       </div>
-      <Panel focusId={focus?.id ?? null} onFocus={id => setFocus(id ? { id, hops: 1 } : null)} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
+      <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} focusId={focus?.id ?? null} onFocus={id => setFocus(id ? { id, hops: 1 } : null)} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
         onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onClose={() => select(null)} />
     </>
   );

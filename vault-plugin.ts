@@ -194,16 +194,21 @@ export default function vault(): Plugin {
     load(id) { if (id === RID) return `export default ${JSON.stringify(current.data)}`; },
     configureServer(server) {
       roots.forEach(r => fs.existsSync(r) && server.watcher.add(r));
-      let timer: ReturnType<typeof setTimeout> | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null, external = false;
+      const selfWrites = new Map<string, number>();   // real path -> when this server saved it (so our own saves do not reload the page mid-edit)
       const onChange = (f: string) => {
         if (!roots.some(r => f.startsWith(r)) || /[\\/]\./.test(f.slice(roots.find(r => f.startsWith(r))!.length)) || !/\.(md|excalidraw|png|jpe?g|gif|svg|webp)$/i.test(f)) return;
-        // batch bursts of saves (Obsidian autosave, iCloud sync) into one reload
+        let own = false; try { const t = selfWrites.get(fs.realpathSync(f)); own = !!t && Date.now() - t < 5000; } catch {}
+        if (!own) external = true;
+        // batch bursts of saves (Obsidian autosave, iCloud sync) into one update
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
           timer = null; current = loadVaults(cfg); report();
           const m = server.moduleGraph.getModuleById(RID);
           if (m) server.moduleGraph.invalidateModule(m);
-          server.ws.send({ type: 'full-reload' });
+          // external edits reload the page; our own saves only tell the page (it refreshes when the editor closes)
+          server.ws.send(external ? { type: 'full-reload' } : { type: 'custom', event: 'km:self-write', data: {} });
+          external = false;
         }, 700);
       };
       server.watcher.on('change', onChange).on('add', onChange).on('unlink', onChange);
@@ -293,7 +298,7 @@ export default function vault(): Plugin {
           tmp = path.join(path.dirname(f.abs), `.${path.basename(f.abs)}.km-tmp-${process.pid}-${Date.now()}`);
           const fd = fs.openSync(tmp, 'wx', st.mode & 0o777);
           try { fs.writeSync(fd, next); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-          fs.renameSync(tmp, f.abs); tmp = '';
+          fs.renameSync(tmp, f.abs); tmp = ''; selfWrites.set(f.abs, Date.now());
           try { prune(dir); } catch {}
           const after = fs.statSync(f.abs);
           console.log(`[vault] saved ${f.abs} (backup ${bname})`);
@@ -304,9 +309,9 @@ export default function vault(): Plugin {
         }
       });
 
-      // Move one note to the macOS Trash (recoverable). Same guard as the other write paths except the token (client wiring comes with the editor).
+      // Move one note to the macOS Trash (recoverable). Same guard as the other write paths.
       server.middlewares.use('/api/delete', async (req, res) => {
-        const bad = guard(req, { post: true, token: false });
+        const bad = guard(req, { post: true, token: true });
         if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
         try {
           const { id } = JSON.parse(await readBody(req, 4096) || '{}');
