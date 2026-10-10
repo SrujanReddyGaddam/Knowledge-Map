@@ -222,9 +222,6 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .diff div { padding:0 14px; } .diff .add { background:#2f7a4518; } .diff .del { background:#b3392b18; } .diff .gap { color:var(--mute); font-style:italic; padding:4px 14px; }
 .hist-done { color:#2f7a45; font-size:13px; }
 
-.ed-ac { position:absolute; left:10px; right:10px; bottom:10px; z-index:5; margin:0; padding:4px; list-style:none; background:var(--panel); border:1px solid var(--ink); border-radius:12px; box-shadow:0 8px 30px #0003; max-height:280px; overflow:auto; }
-.ed-ac li { display:flex; flex-direction:column; gap:1px; padding:6px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
-.ed-ac li.on { background:var(--ink); color:var(--bg); } .ed-ac small { font:10.5px var(--mono); opacity:.65; word-break:break-all; }
 
 .rename { display:flex; flex-direction:column; gap:12px; font-size:13px; }
 .rn-label { font:11px var(--mono); letter-spacing:.04em; color:var(--mute); }
@@ -232,3 +229,37 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .rn-plan { border:1px solid var(--line); border-radius:12px; padding:12px 14px; line-height:1.5; max-height:46vh; overflow:auto; } .rn-plan p { margin:8px 0 4px; } .rn-plan ul { margin:4px 0; padding-left:18px; } .rn-plan small { color:var(--mute); font:11px var(--mono); margin-left:6px; }
 .rn-note { color:var(--mute); font-size:12px; } .rn-warn { color:#b3392b; } .rn-warn label { display:flex; gap:8px; align-items:center; margin-top:6px; color:var(--ink); }
 .rn-actions { display:flex; gap:10px; } .rn-actions .btn { padding:5px 14px; }
+
+/* export to PDF: only the open note, on white */
+@media print {
+  :root, :root[data-theme="dark"] { --bg:#fff !important; --panel:#fff !important; --ink:#000 !important; --mute:#555 !important; --line:#ccc !important; --soft:#eee !important; }
+  html, body, #root { height:auto !important; overflow:visible !important; background:#fff !important; }
+  body::before, body::after, body > :not(#root), #root > :not(.panel) { display:none !important; }
+  .panel { position:static !important; transform:none !important; width:auto !important; height:auto !important; border:0 !important; background:#fff !important; display:block !important; }
+  .p-head, .p-nav, .p-resize, .actions, .toc, .read-more, .label, .p-lead, .p-meta, .p-body > :not(.p-title):not(.print-keep) { display:none !important; }
+  .md > h1:first-child { display:none !important; }
+  .p-body { overflow:visible !important; padding:0 !important; animation:none !important; }
+  .md { max-height:none !important; overflow:visible !important; -webkit-mask:none !important; mask:none !important; }
+  .md::after { display:none !important; }
+  .md img, .md svg { max-width:100%; } .md pre, .md table, .md blockquote { break-inside:avoid; }
+}
+
+/* rich (live preview) editor */
+.rt { flex:1; min-height:200px; border:1px solid var(--line); border-radius:12px; background:var(--bg); overflow:hidden; display:flex; } .rt:focus-within { border-color:var(--ink); }
+.rt .cm-editor { flex:1; min-width:0; height:100%; outline:none; background:transparent; color:var(--ink); } .rt .cm-scroller { overflow:auto; font:calc(14px * var(--fs, 1))/1.7 var(--sans); padding:8px 0; }
+.rt .cm-content { padding:6px 18px 40px; caret-color:var(--ink); } .rt .cm-line { padding:0; } .rt .cm-cursor { border-left-color:var(--ink); }
+.rt .cm-selectionBackground, .rt .cm-editor.cm-focused .cm-selectionBackground { background:var(--soft) !important; } .rt .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { background:#7a9a8a55 !important; }
+.rt .cm-h { font-weight:700; line-height:1.3; letter-spacing:-.01em; padding-top:.5em; } .rt .cm-h1 { font-size:1.7em; } .rt .cm-h2 { font-size:1.4em; } .rt .cm-h3 { font-size:1.18em; } .rt .cm-h4, .rt .cm-h5, .rt .cm-h6 { font-size:1em; }
+.rt .cm-strong { font-weight:700; } .rt .cm-em { font-style:italic; } .rt .cm-del { text-decoration:line-through; color:var(--mute); }
+.rt .cm-icode { font:.88em var(--mono); background:var(--soft); border-radius:4px; padding:1px 4px; }
+.rt .cm-syn, .rt .cm-listmark, .rt .cm-wlsrc, .rt .cm-linksrc { color:var(--mute); }
+.rt .cm-bullet { color:var(--mute); display:inline-block; width:1em; }
+.rt .cm-link, .rt .cm-wl { color:var(--accent); text-decoration:underline; text-underline-offset:3px; text-decoration-color:color-mix(in srgb, var(--accent) 40%, transparent); } .rt .cm-embed { font-style:italic; }
+.rt .cm-quote { border-left:3px solid var(--line); padding-left:12px !important; color:var(--mute); }
+.rt .cm-fence { font:.88em/1.6 var(--mono); background:var(--soft); padding:0 12px !important; } .rt .cm-fence-edge { color:var(--mute); }
+.rt .cm-hr { color:var(--mute); border-bottom:1px solid var(--line); }
+.rt .cm-fm { font:11.5px/1.6 var(--mono); color:var(--mute); background:var(--soft); padding:0 12px !important; }
+.rt .cm-tooltip-autocomplete { background:var(--panel) !important; border:1px solid var(--ink) !important; border-radius:12px; padding:4px; box-shadow:0 8px 30px #0003; overflow:hidden; } .rt .cm-tooltip-autocomplete ul { font:13px var(--sans) !important; max-height:300px; }
+.cm-tooltip-autocomplete { background:var(--panel) !important; border:1px solid var(--ink) !important; border-radius:12px; padding:4px; box-shadow:0 8px 30px #0003; color:var(--ink); } .cm-tooltip-autocomplete ul { font:13px var(--sans) !important; } .cm-tooltip-autocomplete li { border-radius:8px; padding:5px 10px !important; display:flex; flex-direction:column; align-items:flex-start; } .cm-tooltip-autocomplete li[aria-selected] { background:var(--ink) !important; color:var(--bg) !important; } .cm-completionDetail { font:10.5px var(--mono) !important; margin:0 !important; opacity:.65; font-style:normal !important; }
+.ed-tools { display:flex; flex-wrap:wrap; gap:4px; align-items:center; flex:none; } .ed-tools > button { all:unset; cursor:pointer; min-width:28px; height:28px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; padding:0 7px; border-radius:8px; font:600 12px var(--mono); color:var(--ink); } .ed-tools > button:hover { background:var(--soft); }
+.ed-mode { margin-left:auto; } .ed-mode button { all:unset; cursor:pointer; font:10.5px var(--mono); letter-spacing:.06em; color:var(--mute); padding:5px 8px; border-radius:8px; } .ed-mode button:hover { background:var(--soft); color:var(--ink); }

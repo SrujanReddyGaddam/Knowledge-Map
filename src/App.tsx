@@ -76,9 +76,13 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('soundId', soundId); } catch {} }, [soundId]);
   useEffect(() => { const f = () => setVw(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
 
+  // Focus mode (canvas toggle): every note you pick, from the map, search, Browse or a link, becomes the focus until Esc
+  const [focusMode, setFocusMode] = useState(false);
+  const focusModeRef = useRef(false); focusModeRef.current = focusMode;
+  const hopsRef = useRef<1 | 2>(1); hopsRef.current = focus?.hops ?? hopsRef.current;
   const select = useCallback((id: string | null) => {
     if (editIdRef.current && id !== editIdRef.current) { if (dirtyRef.current && !confirm('You have unsaved changes. Discard them?')) return; clearDraft(); endEdit(); }
-    if (id && soundRef.current !== 'off') play(soundRef.current); setSelected(id); history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname); }, [endEdit]);
+    if (id && soundRef.current !== 'off') play(soundRef.current); if (id && focusModeRef.current) setFocus({ id, hops: hopsRef.current }); setSelected(id); history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname); }, [endEdit]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch {} }, [dark]);
 
   const q = query.trim();
@@ -141,9 +145,9 @@ export default function App() {
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement;
+      const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || !!(document.activeElement as HTMLElement | null)?.isContentEditable;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); const el = document.getElementById('search') as HTMLInputElement | null; el?.focus(); el?.select(); return; }
-      if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else select(null); }
+      if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else if (focusModeRef.current) { setFocusMode(false); setFocus(null); } else select(null); }
       else if (typing) return;
       else if (e.key === '/') { e.preventDefault(); document.getElementById('search')?.focus(); }
       else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) setBrowse(v => !v);
@@ -193,7 +197,7 @@ export default function App() {
         </div>
         {matches && (
           <div className="active-filters">
-            {focus && byId.get(focus.id) && <span className="focus-chip"><button className="chip active" onClick={() => setFocus(null)} title="Clear focus">Focus: {shortTitle(byId.get(focus.id)!.title)} &times;</button>
+            {focus && byId.get(focus.id) && <span className="focus-chip"><button className="chip active" onClick={() => { setFocus(null); setFocusMode(false); }} title="Clear focus">Focus: {shortTitle(byId.get(focus.id)!.title)} &times;</button>
               <span className="seg" role="group" aria-label="Hops"><button className={focus.hops === 1 ? 'on' : ''} onClick={() => setFocus({ ...focus, hops: 1 })}>1 hop</button><button className={focus.hops === 2 ? 'on' : ''} onClick={() => setFocus({ ...focus, hops: 2 })}>2 hops</button></span></span>}
             {vaultSel.map(v => <button key={v} className="chip active" onClick={() => setVaultSel(vaultSel.filter(x => x !== v))}>{v} &times;</button>)}
             {section && <button className="chip active" onClick={() => setSection(null)}>{section.replace(/-/g, ' ')} &times;</button>}
@@ -249,7 +253,7 @@ export default function App() {
             <div className="eyebrow">Knowledge map</div>
             <p><b>{vault.vaults.join(' + ')}</b><br />{vault.notes.length} notes, {vault.edges.length} links{vault.broken.length ? `, ${vault.broken.length} broken wikilinks` : ''}</p>
             <div className="eyebrow">Controls</div>
-            <p className="keys"><kbd>drag</kbd> pan &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> rotate &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close</p>
+            <p className="keys"><kbd>drag</kbd> pan &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> rotate &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
           </div>
         )}
       </div>
@@ -263,6 +267,10 @@ export default function App() {
             ))}
           </div>
         )}
+        <button className={'icon-btn' + (focusMode ? ' on' : '')} aria-pressed={focusMode} aria-label="Focus mode" title={focusMode ? 'Focus mode on: every note you pick becomes the focus. Esc to leave' : 'Focus mode: every note you pick becomes the focus until Esc'}
+          onClick={() => { if (focusMode) { setFocusMode(false); setFocus(null); } else { setFocusMode(true); if (selNote) setFocus({ id: selNote.id, hops: hopsRef.current }); } }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.2" fill="currentColor" /><circle cx="8" cy="8" r="5.6" /><path d="M8 0.8v2.2M8 13v2.2M0.8 8H3M13 8h2.2" /></svg>
+        </button>
         <button className="icon-btn" onClick={() => { setPalOpen(v => !v); setSoundOpen(false); }} aria-label="Color palette" title="Color palette"><i className="swatch-dot" style={{ background: 'var(--accent)' }} /></button>
         <button className="icon-btn" onClick={() => setDark(d => !d)} aria-label="Toggle theme" title="Toggle theme">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="6" /><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor" /></svg>
@@ -284,7 +292,7 @@ export default function App() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2 6h2.5L8 3v10L4.5 10H2z" />{soundId !== 'off' ? <><path d="M10.5 5.5a3.5 3.5 0 0 1 0 5" /><path d="M12.5 3.5a6.5 6.5 0 0 1 0 9" /></> : <path d="M11 6l3.5 4M14.5 6L11 10" />}</svg>
         </button>
       </div>
-      <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} focusId={focus?.id ?? null} onFocus={id => setFocus(id ? { id, hops: 1 } : null)} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
+      <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
         onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onClose={() => select(null)} />
     </>
   );

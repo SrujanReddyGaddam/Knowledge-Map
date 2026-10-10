@@ -1,28 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { rawNote, saveNote } from './api';
-import data, { type Note } from 'virtual:vault';
-
-// [[ autocomplete: suggest notes by file name, then title, then path; same-vault notes first.
-type Cand = { base: string; title: string; path: string; vault: string; };
-const baseOf = (n: Note) => (n.path.split('/').pop() || '').replace(/\.md$/i, '');
-const subseq = (q: string, t: string) => { let i = 0; for (const c of t) if (c === q[i] && ++i === q.length) return true; return q.length === 0; };
-function suggest(cands: Cand[], q: string, vault: string): Cand[] {
-  const ql = q.trim().toLowerCase(), out: { c: Cand; s: number }[] = [];
-  for (const c of cands) {
-    const b = c.base.toLowerCase(), t = c.title.toLowerCase();
-    let s = 0;
-    if (!ql) s = 1;
-    else if (b === ql) s = 100;
-    else if (b.startsWith(ql)) s = 80;
-    else if (b.includes(ql)) s = 60;
-    else if (t.includes(ql)) s = 50;
-    else if (c.path.toLowerCase().includes(ql)) s = 30;
-    else if (subseq(ql, b)) s = 15;
-    if (s) out.push({ c, s: s + (c.vault === vault ? 5 : 0) });
-  }
-  return out.sort((a, b) => b.s - a.s || a.c.base.length - b.c.base.length || a.c.base.localeCompare(b.c.base)).slice(0, 8).map(x => x.c);
-}
-
+import RichText, { type Fmt, type RichHandle } from './RichText';
+import type { Note } from 'virtual:vault';
 
 export type Draft = { id: string; text: string; baseHash: string; eol: 'lf' | 'crlf' };
 const DRAFT = 'kmDraft';
@@ -38,6 +17,8 @@ const eolOf = (t: string): 'lf' | 'crlf' | 'mixed' => {
 };
 const toUi = (t: string) => t.replace(/\r\n/g, '\n');
 
+const TOOLS: [Fmt, string, string][] = [['bold', 'B', 'Bold (\u2318B)'], ['italic', 'I', 'Italic (\u2318I)'], ['strike', 'S', 'Strikethrough'], ['code', '</>', 'Inline code'], ['h', 'H', 'Heading (click again for the next level)'], ['bullet', '\u2022', 'Bullet list'], ['number', '1.', 'Numbered list'], ['task', '\u2610', 'Task list'], ['quote', '\u201C', 'Quote'], ['link', '\u{1F517}', 'Link (\u2318K)'], ['wikilink', '[[ ]]', 'Link to a note']];
+
 type Props = { note: Note; draft: Draft | null; onEnd: (saved: boolean) => void; onSaved: (mtime: number) => void; onDirty: (d: boolean) => void };
 
 export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) {
@@ -52,30 +33,9 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
   const [showTheirs, setShowTheirs] = useState(false);
   const everSaved = useRef(false);
   const area = useRef<HTMLTextAreaElement>(null);
-  const cands = useMemo<Cand[]>(() => data.notes.filter(n => n.kind !== 'drawing').map(n => ({ base: baseOf(n), title: n.title, path: n.path, vault: n.vault })), []);
-  const [ac, setAc] = useState<{ start: number; q: string } | null>(null);   // start = index right after "[["
-  const [pick, setPick] = useState(0);
-  const caret = useRef<number | null>(null);
-  const dismissed = useRef(-1);   // Esc hides the list for this [[ until the user leaves it
-  const items = useMemo(() => (ac ? suggest(cands, ac.q, note.vault) : []), [ac, cands, note.vault]);
-  useLayoutEffect(() => { if (caret.current != null && area.current) { area.current.setSelectionRange(caret.current, caret.current); caret.current = null; } });
-  const refresh = (el: HTMLTextAreaElement) => {
-    const pos = el.selectionStart;
-    if (el.selectionEnd !== pos) { setAc(null); return; }
-    const m = el.value.slice(0, pos).match(/\[\[([^\[\]\n|#]*)$/);
-    if (!m) { dismissed.current = -1; setAc(null); return; }
-    const start = pos - m[1].length;
-    if (start === dismissed.current) return;
-    setAc(a => { if (a && a.start === start && a.q === m[1]) return a; setPick(0); return { start, q: m[1] }; });
-  };
-  const accept = (c: Cand) => {
-    const el = area.current; if (!el || !ac) return;
-    const end = el.selectionStart, after = el.value.slice(end);
-    const close = after.startsWith(']]') ? '' : ']]';
-    const next = el.value.slice(0, ac.start) + c.base + close + after;
-    caret.current = ac.start + c.base.length + 2; dismissed.current = -1;
-    setText(next); setAc(null);
-  };
+  const [rich, setRich] = useState(() => { try { return localStorage.getItem('editorMode') !== 'source'; } catch { return true; } });
+  const rt = useRef<RichHandle>(null);
+  const setMode = (r: boolean) => { setRich(r); try { localStorage.setItem('editorMode', r ? 'rich' : 'source'); } catch {} setTimeout(() => (r ? rt.current?.focus() : area.current?.focus()), 30); };
 
   useEffect(() => {
     let live = true;
@@ -90,7 +50,7 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
         setText(draft.text);
         if (draft.baseHash !== r.json.hash) setConflict({ text: disk, hash: r.json.hash });   // file changed on disk since the draft started
       } else setText(disk);
-      setPhase('ready'); setTimeout(() => area.current?.focus(), 30);
+      setPhase('ready'); setTimeout(() => (rt.current ?? area.current)?.focus(), 60);
     }).catch(e => { if (live) { setMsg(String(e)); setPhase('blocked'); } });
     return () => { live = false; };
   }, [note.id]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -128,10 +88,17 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
     <div className="editor">
       <div className="ed-bar">
         <span className={'ed-status' + (dirty ? ' dirty' : '')}>{status}</span>
-        <span className="ed-hint">{eol === 'crlf' ? 'CRLF file, kept as is. ' : ''}&#8984;S save &middot; Esc close &middot; [[ links</span>
+        <span className="ed-hint">{eol === 'crlf' ? 'CRLF file, kept as is. ' : ''}&#8984;S save &middot; Esc close</span>
         <button className="btn primary" disabled={!dirty || saving || !!conflict} onClick={() => save()}>Save</button>
         <button className="btn" onClick={close}>{everSaved.current && !dirty ? 'Done' : 'Cancel'}</button>
       </div>
+      {rich && (
+        <div className="ed-tools" role="toolbar" aria-label="Formatting">
+          {TOOLS.map(([f, label, title]) => <button key={f} type="button" title={title} aria-label={title} onMouseDown={e => e.preventDefault()} onClick={() => rt.current?.format(f)}>{label}</button>)}
+          <span className="ed-mode"><button type="button" className="on" onClick={() => setMode(false)} title="Edit the raw markdown text instead">Source mode</button></span>
+        </div>
+      )}
+      {!rich && <div className="ed-tools"><span className="ed-mode"><button type="button" onClick={() => setMode(true)} title="Back to the rich editor">Rich editor</button></span></div>}
       {conflict && (
         <div className="ed-conflict" role="alert">
           <b>This file changed on disk since you opened it</b> (Obsidian, iCloud or another editor). Nothing was overwritten.
@@ -145,27 +112,12 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
         </div>
       )}
       {msg && <div className="ed-err">{msg}</div>}
-      <textarea ref={area} className="ed-area" value={text} spellCheck={false} onChange={e => { setText(e.target.value); refresh(e.target); }}
-        onSelect={e => refresh(e.currentTarget)} onBlur={() => setAc(null)}
-        onKeyDown={e => {
-          if (ac && items.length && !e.metaKey && !e.ctrlKey && !e.altKey) {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setPick(p => (p + 1) % items.length); return; }
-            if (e.key === 'ArrowUp') { e.preventDefault(); setPick(p => (p + items.length - 1) % items.length); return; }
-            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); accept(items[Math.min(pick, items.length - 1)]); return; }
-          }
-          if (ac && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismissed.current = ac.start; setAc(null); return; }
-          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (dirty && !conflict) save(); }
-          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-        }} />
-      {ac && items.length > 0 && (
-        <ul className="ed-ac" role="listbox" aria-label="Link suggestions">
-          {items.map((c, i) => (
-            <li key={c.vault + c.path} role="option" aria-selected={i === pick} className={i === pick ? 'on' : ''} onMouseDown={e => { e.preventDefault(); accept(c); }} onMouseEnter={() => setPick(i)}>
-              <b>{c.base}</b><small>{c.vault} / {c.path}</small>
-            </li>
-          ))}
-        </ul>
-      )}
+      {rich ? <RichText ref={rt} value={text} vault={note.vault} onChange={setText} onEsc={close} onSave={() => { if (dirty && !conflict) save(); }} />
+        : <textarea ref={area} className="ed-area" value={text} spellCheck={false} onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (dirty && !conflict) save(); }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+          }} />}
     </div>
   );
 }

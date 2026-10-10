@@ -13,7 +13,6 @@ type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
   open: boolean; note: Note | null; index: number; total: number; byId: Map<string, Note>; resolve: (from: Note, name: string) => Note | undefined;
   prev: Note | null; next: Note | null; onNav: (id: string) => void; onTag: (t: string) => void; onClose: () => void; onDelete: (id: string) => Promise<string | null>;
-  focusId: string | null; onFocus: (id: string | null) => void;
   editing: boolean; draft: Draft | null; onEdit: () => void; onEditEnd: (saved: boolean) => void; onSaved: (id: string, mtime: number) => void; onDirty: (d: boolean) => void;
 };
 
@@ -30,7 +29,15 @@ const mention = (from: Note, target: Note) => {
   return t.length > 170 ? t.slice(0, 168) + '..' : t;
 };
 
-export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onClose, onDelete, focusId, onFocus, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
+// Prints just the note (see @media print in styles.css). The browser's print dialog has Save as PDF; the title becomes the file name.
+function exportPdf(title: string) {
+  const old = document.title, done = () => { document.title = old; removeEventListener('afterprint', done); };
+  document.title = title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || old;
+  addEventListener('afterprint', done);
+  requestAnimationFrame(() => print());
+}
+
+export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onClose, onDelete, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
   const [tocOpen, setTocOpen] = useState(false);
   const [hist, setHist] = useState(false);
   const [ren, setRen] = useState(false);
@@ -143,12 +150,12 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               {note.status !== 'none' && <span className={'badge ' + note.status}>{note.status}</span>}
               {note.fetched && <span className="muted">fetched {note.fetched}</span>}
             </div>
-            {note.kind === 'drawing' && note.scene && <section><div className="label">Drawing</div><Drawing scene={note.scene} dark={dark} /></section>}
+            {note.kind === 'drawing' && note.scene && <section className="print-keep"><div className="label">Drawing</div><Drawing scene={note.scene} dark={dark} /></section>}
             {note.kind !== 'drawing' && toc.length >= 3 && <section className="toc">
               <button className="toc-head" onClick={() => setTocOpen(v => !v)} aria-expanded={tocOpen}><span className="label">Contents ({toc.length})</span><span className={'chev' + (tocOpen ? ' flip' : '')}>&#8964;</span></button>
               {tocOpen && <ol>{toc.map(t => <li key={t.id} style={{ paddingLeft: (t.level - 2) * 14 }}><button onClick={() => goTo(t.id)}>{t.text}</button></li>)}</ol>}
             </section>}
-            {note.kind !== 'drawing' && <section>
+            {note.kind !== 'drawing' && <section className="print-keep">
               <div className="label">Full note</div>
               <div ref={mdRef} className={'md' + (expanded ? ' expanded' : '')} dangerouslySetInnerHTML={{ __html: html }}
                 onClick={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) { hideCard(); onNav(a.dataset.id!); } }}
@@ -156,7 +163,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
                 onMouseOut={e => { if ((e.target as HTMLElement).closest('a.wl[data-id]')) hideCard(); }} />
               <button className="read-more" onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : 'Read more'} <span className={expanded ? 'flip' : ''}>&#8964;</span></button>
             </section>}
-            {note.kind === 'drawing' && note.body && <section><div className="label">Text in this drawing</div><div className="md expanded"><p style={{ whiteSpace: 'pre-wrap' }}>{note.body}</p></div></section>}
+            {note.kind === 'drawing' && note.body && <section className="print-keep"><div className="label">Text in this drawing</div><div className="md expanded"><p style={{ whiteSpace: 'pre-wrap' }}>{note.body}</p></div></section>}
             {outs.length > 0 && <section><div className="label">Links to ({outs.length})</div><div className="chips">{outs.map(c => <button key={c.id} className="chip" {...hov(c.id)} onClick={() => { hideCard(); onNav(c.id); }}>{shortTitle(c.title)}</button>)}</div></section>}
             <section><div className="label">Linked from ({ins.length})</div>
               {ins.length ? <ul className="bl">{ins.map(({ n, ctx }) => (
@@ -171,7 +178,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               {note.writable && <button className="btn" onClick={() => setRen(true)} title="Rename or move this note and update links to it">Rename</button>}
               {note.writable && <button className="btn" onClick={() => setHist(true)} title="Saved versions of this note, compare and restore">History</button>}
               <a className="btn primary" href={obsidian}>Open in Obsidian</a>
-              <button className="btn" onClick={() => onFocus(focusId === note.id ? null : note.id)} title="Show only this note and its neighbours on the map">{focusId === note.id ? 'Clear focus' : 'Focus on map'}</button>
+              <button className="btn" onClick={() => exportPdf(shortTitle(note.title))} title="Print this note, or choose Save as PDF in the print dialog">Export PDF</button>
               <button className="btn" onClick={() => { if (!note.abs) { location.reload(); return; } copy('path', note.abs); }} title={note.abs}>{copied === 'path' ? 'Path copied' : 'Copy path'}</button>
               <button className="btn" onClick={() => copy('share', location.origin + location.pathname + '#' + encodeURIComponent(note.id))}>{copied === 'share' ? 'Link copied' : 'Share'}</button>
               <button className="btn" onClick={() => copy('md', note.body)}>{copied === 'md' ? 'Copied' : 'Copy markdown'}</button>
