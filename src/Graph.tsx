@@ -7,7 +7,7 @@ import { shortTitle } from './util';
 import type { Colors } from './palettes';
 
 type GNode = { id: string; note: Note; tx?: number; ty?: number; tz?: number; R0: number; show: number; showT: number; x: number; y: number; z: number; fx?: number | null; fy?: number | null; fz?: number | null; r: number; t: number; R: number; hov: number; dim: number; lab: number; sx: number; sy: number; sr: number; wz: number; front: number; p: [number, number, number] };
-type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; hide: boolean; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
+type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; tints?: Map<string, string> | null; hide: boolean; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
 
 const SPHERE = 330, DEFAULT_DIST = 1080, FOV = 46;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -68,7 +68,7 @@ export default function Graph(props: Props) {
     const cv = renderer.domElement; cv.className = 'graph'; host.appendChild(cv);
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(FOV, 1, 50, 6000);
-    const bg = new THREE.Color(), nearTone = new THREE.Color(), farTone = new THREE.Color(), ink = new THREE.Color(), accent = new THREE.Color(), tmp = new THREE.Color();
+    const bg = new THREE.Color(), nearTone = new THREE.Color(), farTone = new THREE.Color(), ink = new THREE.Color(), accent = new THREE.Color(), tmp = new THREE.Color(), tintC = new THREE.Color();
 
     const discs = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ depthTest: false, depthWrite: false }), nodes.length);
     discs.instanceMatrix.setUsage(THREE.DynamicDrawUsage); discs.frustumCulled = false; discs.renderOrder = 1;
@@ -185,7 +185,8 @@ export default function Graph(props: Props) {
       tgt[0] = x1 * cy - z1 * sy; tgt[1] = y; tgt[2] = x1 * sy + z1 * cy;
     };
     const down = (e: PointerEvent) => {
-      rotMode = e.shiftKey || e.button === 2; drag = true; moved = 0; last = pos(e); cv.setPointerCapture(e.pointerId); tween?.kill(); vel.x = vel.y = 0; pend.x = pend.y = 0;
+      // plain drag rotates the ball; shift/right-drag pans
+      rotMode = !(e.shiftKey || e.button === 2); drag = true; moved = 0; last = pos(e); cv.setPointerCapture(e.pointerId); tween?.kill(); vel.x = vel.y = 0; pend.x = pend.y = 0;
       dragRef.node = pick(last[0], last[1]); if (dragRef.node) sim.alphaTarget(0.2).restart();
       if (dragRef.node && pin.node && !pin.group.has(dragRef.node)) unpin();
       cv.style.cursor = 'grabbing';
@@ -195,9 +196,9 @@ export default function Graph(props: Props) {
       if (drag) {
         const dx = mx - last[0], dy = my - last[1]; moved += Math.abs(dx) + Math.abs(dy); idleSince = performance.now();
         if (dragRef.node) { if (moved >= 6) { planePoint(mx, my, dragRef.node); if (dragRef.node.fx == null) { dragRef.node.fx = dragRef.node.x; dragRef.node.fy = dragRef.node.y; dragRef.node.fz = dragRef.node.z; } } }
-        else if (rotMode) { pend.y += dx * 0.0052; pend.x += dy * 0.0052; }  // shift/right-drag rotates; applied smoothly in the frame loop
+        else if (rotMode) { pend.y += dx * 0.0052; pend.x += dy * 0.0052; }  // plain drag rotates; applied smoothly in the frame loop
         else {
-          // plain drag pans the view so the content follows the pointer (1:1 at the middle depth)
+          // shift/right-drag pans the view so the content follows the pointer (1:1 at the middle depth)
           tween?.kill(); gsap.killTweensOf(cam, 'tx,ty');
           const upp = cam.dist / (H / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)))), lim = SPHERE * 1.6;
           cam.tx = cam.px = clamp(cam.px - dx * upp, -lim, lim); cam.ty = cam.py = clamp(cam.py + dy * upp, -lim, lim);
@@ -245,7 +246,7 @@ export default function Graph(props: Props) {
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
-      const { selectedId, colors: c, matchIds, markIds } = live.current;
+      const { selectedId, colors: c, matchIds, markIds, tints } = live.current;
       const ease = 1 - Math.exp(-dt * 10), fast = 1 - Math.exp(-dt * 14);
 
       // rotation: inertia after a drag, then a slow idle spin
@@ -298,7 +299,8 @@ export default function Graph(props: Props) {
         const s = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * (1 + n.hov * 0.12 + (marked ? 0.18 : 0)) * smooth(n.show);
         m4.compose(v3.set(n.p[0], n.p[1], n.p[2]), qI, sc.set(s, s, 1)); discs.setMatrixAt(i, m4);
         const f = smooth(n.front);
-        tmp.copy(farTone).lerp(nearTone, f * (0.35 + 0.65 * Math.pow(n.t, 0.6))).lerp(bg, clamp(n.dim * 0.5 + (1 - f) * 0.35, 0, 1));
+        const tint = tints?.get(n.id);   // color by type: the tint takes the place of the near tone, so depth still fades it
+        tmp.copy(farTone).lerp(tint ? tintC.set(tint) : nearTone, tint ? 0.55 + 0.45 * f : f * (0.35 + 0.65 * Math.pow(n.t, 0.6))).lerp(bg, clamp(n.dim * 0.5 + (1 - f) * 0.35, 0, 1));
         tmp.lerp(accent, Math.max(n.hov * 0.7, marked ? 0.85 : 0)).lerp(bg, 1 - n.show); discs.setColorAt(i, tmp);
       });
       discs.instanceMatrix.needsUpdate = true; discs.instanceColor!.needsUpdate = true;

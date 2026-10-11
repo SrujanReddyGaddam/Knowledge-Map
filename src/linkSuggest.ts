@@ -1,4 +1,4 @@
-import data, { type Note } from 'virtual:vault';
+import data, { type Note } from './data';
 
 // [[ autocomplete candidates: suggest notes by file name, then title, then path; same-vault notes first.
 export type Cand = { base: string; title: string; path: string; vault: string };

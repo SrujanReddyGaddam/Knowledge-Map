@@ -3,7 +3,7 @@ import type { Note } from 'virtual:vault';
 import { shortTitle } from './util';
 
 type Props = {
-  notes: Note[]; byId: Map<string, Note>; brokenLinks: { from: string; target: string }[];
+  top: number; notes: Note[]; byId: Map<string, Note>; brokenLinks: { from: string; target: string }[]; lint: Map<string, string[]>;
   changed: Set<string>; onMarkAllSeen: () => void; hl: boolean; onHl: (v: boolean) => void;
   selected: string | null; onSelect: (id: string) => void; onClose: () => void;
 };
@@ -38,7 +38,7 @@ function buildTree(notes: Note[]) {
   return [...roots.values()];
 }
 
-export default function Browse({ notes, byId, brokenLinks, changed, onMarkAllSeen, hl, onHl, selected, onSelect, onClose }: Props) {
+export default function Browse({ top, notes, byId, brokenLinks, lint, changed, onMarkAllSeen, hl, onHl, selected, onSelect, onClose }: Props) {
   const [tab, setTab] = useState<Tab>(() => { try { const t = localStorage.getItem('browseTab'); return t === 'new' || t === 'tree' || t === 'health' ? t : 'recent'; } catch { return 'recent'; } });
   useEffect(() => { try { localStorage.setItem('browseTab', tab); } catch {} }, [tab]);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
@@ -57,6 +57,14 @@ export default function Browse({ notes, byId, brokenLinks, changed, onMarkAllSee
     const m = new Map<string, string[]>(); brokenLinks.forEach(b => m.set(b.from, [...(m.get(b.from) || []), b.target])); return [...m];
   }, [brokenLinks]);
 
+  // schema problems grouped by kind, most common first
+  const lintGroups = useMemo(() => {
+    const m = new Map<string, Note[]>();
+    lint.forEach((ps, id) => { const n = byId.get(id); if (n) ps.forEach(p => m.set(p, [...(m.get(p) || []), n])); });
+    return [...m].sort((a, b) => b[1].length - a[1].length);
+  }, [lint, byId]);
+  const [lintOpen, setLintOpen] = useState<string | null>(null);
+  const healthCount = brokenLinks.length + orphans.length + lint.size;
   const row = (n: Note, extra?: string) => (
     <button key={n.id} className={'br-row' + (n.id === selected ? ' cur' : '')} onClick={() => onSelect(n.id)} title={n.path}>
       <span className="br-title">{changed.has(n.id) && <i className="new-dot" title="Updated since you last looked" />}{shortTitle(n.title)}</span>{extra && <small>{extra}</small>}
@@ -77,13 +85,13 @@ export default function Browse({ notes, byId, brokenLinks, changed, onMarkAllSee
 
   let lastGroup = '';
   return (
-    <div className="browse" role="dialog" aria-label="Browse notes">
+    <div className="browse" style={{ top }} role="dialog" aria-label="Browse notes">
       <div className="br-head">
         <div className="seg" role="tablist">
           <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>New{changed.size ? ` ${changed.size}` : ''}</button>
           <button className={tab === 'recent' ? 'on' : ''} onClick={() => setTab('recent')}>Recent</button>
           <button className={tab === 'tree' ? 'on' : ''} onClick={() => setTab('tree')}>Tree</button>
-          <button className={tab === 'health' ? 'on' : ''} onClick={() => setTab('health')}>Health{brokenLinks.length + orphans.length > 0 ? ` ${brokenLinks.length + orphans.length}` : ''}</button>
+          <button className={tab === 'health' ? 'on' : ''} onClick={() => setTab('health')}>Health{healthCount > 0 ? ` ${healthCount}` : ''}</button>
         </div>
         <button className="icon-btn sm" onClick={onClose} aria-label="Close browse">&times;</button>
       </div>
@@ -103,6 +111,13 @@ export default function Browse({ notes, byId, brokenLinks, changed, onMarkAllSee
         {tab === 'recent' && !recent.length && <div className="empty">No modified times available.</div>}
         {tab === 'tree' && tree.map(r => renderDir(r, 0))}
         {tab === 'health' && <>
+          {lintGroups.length > 0 && <>
+            <div className="br-group">Schema: {lint.size} {lint.size === 1 ? 'note needs' : 'notes need'} attention</div>
+            {lintGroups.map(([p, ns]) => <div key={p}>
+              <button className="br-dir" onClick={() => setLintOpen(lintOpen === p ? null : p)}><span className={'chev' + (lintOpen === p ? ' flip' : '')}>&#8250;</span>{p}<small>{ns.length}</small></button>
+              {lintOpen === p && ns.sort((a, b) => a.title.localeCompare(b.title)).map(n => <div key={n.id} style={{ paddingLeft: 24 }}>{row(n, n.section.replace(/-/g, ' '))}</div>)}
+            </div>)}
+          </>}
           <div className="br-group">Broken links ({brokenLinks.length})</div>
           {brokenBySource.length === 0 && <div className="empty">None. Every wikilink resolves.</div>}
           {brokenBySource.map(([id, targets]) => { const n = byId.get(id); return n ? (

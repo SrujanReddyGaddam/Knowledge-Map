@@ -7,8 +7,11 @@ import path from 'node:path';
 import LZString from 'lz-string';
 import type { Plugin } from 'vite';
 import { rewriteLinks, otherRelativeRefs } from './rename-links';
+import { parseFrontmatter } from './frontmatter';
 
-type VaultCfg = { name?: string; path: string; exclude?: string[]; rootSection?: string; writable?: boolean };
+// sectionDepth: folders whose sections go one level deeper, e.g. { "projects": 2 } gives "projects/acme".
+// lint: check notes against the vault schema (Health tab). sensitivity: default for notes that do not set one.
+type VaultCfg = { name?: string; path: string; exclude?: string[]; rootSection?: string; writable?: boolean; sectionDepth?: Record<string, number>; lint?: boolean; sensitivity?: string };
 type Config = { vaults?: VaultCfg[]; vault?: string; exclude?: string[]; rootSection?: string };
 // Port, config and backup location can be overridden by env so tests can run a throwaway instance beside the real one.
 const PORT = Number(process.env.KM_PORT) || 7777;
@@ -31,28 +34,6 @@ function walk(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-function parseFrontmatter(raw: string) {
-  if (!raw.startsWith('---\n')) return { fm: {} as Record<string, any>, body: raw, hasFm: false };
-  const end = raw.indexOf('\n---', 4);
-  if (end < 0) return { fm: {} as Record<string, any>, body: raw, hasFm: false };
-  const block = raw.slice(4, end);
-  const body = raw.slice(end + 4).replace(/^\n/, '');
-  const fm: Record<string, any> = {};
-  let listKey: string | null = null;
-  for (const line of block.split('\n')) {
-    const li = line.match(/^\s+-\s+(.*)$/);
-    if (li && listKey) { fm[listKey].push(li[1].trim().replace(/^["']|["']$/g, '')); continue; }
-    const m = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-    if (!m) continue;
-    const [, k, v] = m;
-    if (v === '') { fm[k] = []; listKey = k; continue; }
-    listKey = null;
-    if (v.startsWith('[') && v.endsWith(']')) fm[k] = v.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-    else fm[k] = v.replace(/^["']|["']$/g, '');
-  }
-  return { fm, body, hasFm: true };
-}
-
 const key = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').toLowerCase();
 const wikilinks = (t: string) => [...t.matchAll(/(?<!!)\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(m => m[1].trim());
 // [text](./other.md) style links between notes (never http, never images)
@@ -67,14 +48,40 @@ function summaryOf(body: string) {
     .replace(/^(.{140,320}?[.!?])\s.*$/, '$1').slice(0, 320);
 }
 
-function vaultList(cfg: Config): Required<Pick<VaultCfg, 'name' | 'path' | 'exclude' | 'rootSection' | 'writable'>>[] {
+function vaultList(cfg: Config) {
   const list: VaultCfg[] = cfg.vaults?.length ? cfg.vaults : [{ path: cfg.vault!, exclude: cfg.exclude, rootSection: cfg.rootSection }];
-  return list.map(v => ({ name: v.name || path.basename(v.path), path: v.path, exclude: v.exclude || [], rootSection: v.rootSection || 'General', writable: v.writable === true }));
+  return list.map(v => ({ name: v.name || path.basename(v.path), path: v.path, exclude: v.exclude || [], rootSection: v.rootSection || 'General', writable: v.writable === true,
+    sectionDepth: v.sectionDepth || {}, lint: v.lint === true, sensitivity: (v.sensitivity || '').toLowerCase() }));
 }
+
+// exclude entries: an exact path ("README.md"), a folder ("private/"), or a glob ("**/_templates/**", "drafts/*.md")
+function excluder(patterns: string[]) {
+  const exact = new Set<string>(), res: RegExp[] = [];
+  for (const p of patterns) {
+    if (p.endsWith('/')) res.push(new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&')));
+    else if (/[*?]/.test(p)) res.push(new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '\u0001').replace(/\*\*/g, '\u0002').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0001/g, '(?:.*/)?').replace(/\u0002/g, '.*') + '$'));
+    else exact.add(p);
+  }
+  return (rel: string) => exact.has(rel) || res.some(r => r.test(rel));
+}
+
+// frontmatter values as short strings, for field:value search, facets and the schema lint
+const META_SKIP = new Set(['title', 'body']);
+function metaOf(fm: Record<string, any>) {
+  const m: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fm)) {
+    if (META_SKIP.has(k)) continue;
+    const s = (Array.isArray(v) ? v.join(', ') : String(v ?? '')).trim();
+    if (s) m[k.toLowerCase()] = s.slice(0, 300);
+  }
+  return m;
+}
+const one = (v: unknown) => (Array.isArray(v) ? String(v[0] ?? '') : String(v ?? '')).trim().replace(/^\[\[|\]\]$/g, '');
 
 type RawNote = {
   vi: number; vault: string; base: string; path: string; abs: string; folder: string; title: string; tags: string[]; status: string; source: string; fetched: string;
   summary: string; body: string; related: string[]; rawLinks: string[]; id: string; links: string[]; backlinks: string[]; section: string;
+  type: string; customer: string; project: string; sensitivity: string; meta: Record<string, string>;
   kind?: 'drawing'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number; writable: boolean;
 };
 
@@ -108,7 +115,8 @@ function loadVaults(cfg: Config) {
     const files = walk(v.path);
     const images = new Map(files.filter(f => IMG.test(f)).map(f => [path.basename(f), f]));
     assets.push(images);
-    for (const f of files.filter(f => (f.endsWith('.md') || f.endsWith('.excalidraw')) && !v.exclude.includes(path.relative(v.path, f)))) {
+    const skip = excluder(v.exclude);
+    for (const f of files.filter(f => (f.endsWith('.md') || f.endsWith('.excalidraw')) && !skip(path.relative(v.path, f).split(path.sep).join('/')))) {
       const rel = path.relative(v.path, f), parts = rel.split(path.sep), isRawXl = f.endsWith('.excalidraw');
       const base = path.basename(f).replace(/\.md$/i, '').replace(/\.excalidraw$/i, '');
       const text = fs.readFileSync(f, 'utf8');
@@ -119,22 +127,25 @@ function loadVaults(cfg: Config) {
       // for drawings the searchable body is the text inside the drawing, not the compressed payload
       const drawingText: string = scene ? scene.elements.filter((e: any) => e.type === 'text' && e.text).map((e: any) => e.text).join('\n\n') : '';
       const body = scene ? drawingText : parsed.body;
-      const h1 = body.match(/^#\s+(.+)$/m)?.[1]?.trim();
+      const h1 = body.replace(/^(```|~~~)[\s\S]*?^\1/gm, '').match(/^#\s+(.+)$/m)?.[1]?.trim();   // a '# comment' inside a code block is not a heading
       const tags = [...new Set([...asList(fm.tags), ...(typeof fm.type === 'string' && fm.type ? [fm.type] : []), ...(scene ? ['excalidraw'] : [])])];
-      const status = String(fm.status || '').toLowerCase().match(/current|stale|needs-verification|draft/)?.[0] || (hasFm ? 'unknown' : 'none');
+      const status = String(fm.status || '').toLowerCase().match(/current|stale|needs-verification|draft|closed|deprecated|archived/)?.[0] || (hasFm ? 'unknown' : 'none');
       const rewritten = body.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (m, name: string) => {
         const b = path.basename(name.trim());
         if (!images.has(b)) return m;
         usedAssets.add(`${vi}/${b}`);
         return `![${b}](/vault-assets/${vi}/${encodeURIComponent(b)})`;
       });
-      const folder = parts.length > 1 ? parts[0] : v.rootSection;
+      const depth = Math.max(1, Math.min(4, v.sectionDepth[parts[0]] || 1));
+      const folder = parts.length > 1 ? parts.slice(0, Math.min(depth, parts.length - 1)).join('/') : v.rootSection;
       raws.push({
         vi, vault: v.name, base, path: rel, abs: path.resolve(v.path, rel), folder, id: base, section: multi ? `${v.name} / ${folder}` : folder,
         title: (fm.title as string) || h1 || base, tags, status,
         source: fm.source && fm.source !== 'none' ? String(fm.source) : '', fetched: String(fm.source_fetched || fm.updated || fm.date || ''),
         summary: scene ? `Excalidraw drawing, ${scene.elements.length} elements.${drawingText ? ' ' + drawingText.trim().split(/\n+/)[0].slice(0, 90) : ''}` : (typeof fm.summary === 'string' && fm.summary ? fm.summary.slice(0, 320) : summaryOf(body)),
         ...(scene ? { kind: 'drawing' as const, scene } : {}),
+        type: one(fm.type).toLowerCase(), customer: one(fm.customer).toLowerCase(), project: one(fm.project).toLowerCase(),
+        sensitivity: (one(fm.sensitivity) || v.sensitivity).toLowerCase(), meta: metaOf(fm),
         mtime, writable: v.writable && !scene && f.endsWith('.md'), body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: [...wikilinks(body), ...mdlinks(body)], links: [], backlinks: [],
       });
     }
@@ -173,7 +184,7 @@ function loadVaults(cfg: Config) {
   const sections = [...new Set(raws.map(n => n.section))].sort();
   raws.sort((a, b) => a.vi - b.vi || sections.indexOf(a.section) - sections.indexOf(b.section) || a.title.localeCompare(b.title));
   const data = {
-    vaultName: vaults[0]?.name ?? '', vaults: vaults.map(v => v.name), generated: new Date().toISOString(), sections,
+    vaultName: vaults[0]?.name ?? '', vaults: vaults.map(v => v.name), lintVaults: vaults.filter(v => v.lint).map(v => v.name), writableVaults: vaults.filter(v => v.writable).map(v => v.name), generated: new Date().toISOString(), sections,
     notes: raws.map(({ vi, base, folder, related, rawLinks, ...n }) => n),
     edges: [...edges].map(e => e.split('\u0000')),
     broken, brokenLinks,
@@ -340,6 +351,14 @@ export default function vault(): Plugin {
       // writable notes are rewritten atomically, the note is renamed, and its history follows it. Anything that fails is rolled back.
       const BADNAME = /[\\:*?"<>|\u0000-\u001f]/;
       const baseOf = (rel: string) => (rel.split('/').pop() || '').replace(/\.md$/i, '');
+      const NAME_RULE = 'That name is not allowed (no empty parts, dots at the start, or the characters \\ : * ? " < > |).';
+      const segsOk = (segs: string[]) => segs.length <= 12 && !segs.some(sg => !sg || sg === '.' || sg === '..' || sg.startsWith('.') || BADNAME.test(sg) || /[ .]$/.test(sg) || sg.length > 200);
+      // a folder path that may not exist yet: its deepest existing ancestor must be a real folder inside the vault (symlinks cannot lead out)
+      const insideVault = (target: string, rootReal: string) => {
+        let anc = path.dirname(target);
+        while (!fs.existsSync(anc) && anc.length > rootReal.length) anc = path.dirname(anc);
+        try { return fs.statSync(anc).isDirectory() && (fs.realpathSync(anc) + path.sep).startsWith(rootReal + path.sep); } catch { return false; }
+      };
       const atomicWrite = (abs: string, buf: Buffer) => {
         const mode = fs.statSync(abs).mode & 0o777;
         const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.km-tmp-${process.pid}-${Date.now()}`);
@@ -354,17 +373,13 @@ export default function vault(): Plugin {
         if ('err' in f) return { err: f.err };
         if (typeof toRaw !== 'string' || toRaw.length > 400) return { err: [400, 'bad request'] as [number, string] };
         const segs = toRaw.trim().replace(/\.md$/i, '').split('/');
-        if (segs.length > 12 || segs.some(sg => !sg || sg === '.' || sg === '..' || sg.startsWith('.') || BADNAME.test(sg) || /[ .]$/.test(sg) || sg.length > 200)) return { err: [400, 'That name is not allowed (no empty parts, dots at the start, or the characters \\ : * ? " < > |).'] as [number, string] };
+        if (!segsOk(segs)) return { err: [400, NAME_RULE] as [number, string] };
         const vaultCfg = current.vaults.find(v => v.name === f.n.vault)!;
         const oldRel = path.relative(f.root, f.abs).split(path.sep).join('/'), newRel = segs.join('/') + '.md';
         if (newRel === oldRel) return { err: [400, 'That is the current name.'] as [number, string] };
         const caseOnly = newRel.toLowerCase() === oldRel.toLowerCase();
         const newReal = path.join(f.root, ...segs) + '.md';
-        // deepest existing ancestor must be a real folder inside the vault (symlinks cannot lead out)
-        let anc = path.dirname(newReal);
-        while (!fs.existsSync(anc) && anc.length > f.root.length) anc = path.dirname(anc);
-        try { if (!fs.statSync(anc).isDirectory() || !(fs.realpathSync(anc) + path.sep).startsWith(f.root + path.sep)) return { err: [400, 'That folder is not inside the vault.'] as [number, string] }; }
-        catch { return { err: [400, 'That folder is not inside the vault.'] as [number, string] }; }
+        if (!insideVault(newReal, f.root)) return { err: [400, 'That folder is not inside the vault.'] as [number, string] };
         if (fs.existsSync(newReal) && !(caseOnly && fs.statSync(newReal).ino === fs.statSync(f.abs).ino)) return { err: [409, 'A file already exists at that path.'] as [number, string] };
         const oldBase = baseOf(oldRel), newBase = baseOf(newRel), oldKey = key(oldBase), baseChanged = key(newBase) !== oldKey || newBase !== oldBase;
         const sameVault = current.data.notes.filter((x: any) => x.vault === f.n.vault && x.id !== f.n.id);
@@ -454,6 +469,66 @@ export default function vault(): Plugin {
       });
 
       // Move one note to the macOS Trash (recoverable). Same guard as the other write paths.
+      // New notes. Templates are the .md files in <vault>/_templates/ (exclude that folder from the map in config.json).
+      const writableRoot = (name: unknown) => {
+        const v = current.vaults.find(x => x.name === name);
+        if (!v) return { err: [404, 'unknown vault'] as [number, string] };
+        if (!v.writable) return { err: [403, 'vault is read-only (set "writable": true in config.json)'] as [number, string] };
+        try { return { v, root: fs.realpathSync(v.path) }; } catch { return { err: [404, 'vault not readable'] as [number, string] }; }
+      };
+      server.middlewares.use('/api/templates', (req, res) => {
+        const bad = guard(req, { post: false, token: true });
+        if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        const w = writableRoot(new URL(req.url || '/', 'http://x').searchParams.get('vault'));
+        if ('err' in w) return send(res, w.err![0], { error: w.err![1] });
+        const dir = path.join(w.root, '_templates'), templates: { name: string; text: string }[] = [];
+        try {
+          if (fs.existsSync(dir) && (fs.realpathSync(dir) + path.sep).startsWith(w.root + path.sep)) {
+            for (const f of fs.readdirSync(dir).filter(f => /\.md$/i.test(f) && !f.startsWith('.')).sort().slice(0, 50)) {
+              const p = path.join(dir, f), st = fs.lstatSync(p);
+              if (st.isFile() && st.size <= 64 * 1024) templates.push({ name: f.replace(/\.md$/i, ''), text: fs.readFileSync(p, 'utf8') });
+            }
+          }
+        } catch (e) { return send(res, 500, { error: String((e as Error).message || e) }); }
+        send(res, 200, { templates });
+      });
+      server.middlewares.use('/api/create', async (req, res) => {
+        const bad = guard(req, { post: true, token: true });
+        if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        let tmp = '';
+        try {
+          if (Number(req.headers['content-length'] || 0) > MAX_EDIT_BYTES + 4096) { res.setHeader('Connection', 'close'); return send(res, 413, { error: 'note too large' }); }
+          const { vault: vn, path: rawPath, text } = JSON.parse(await readBody(req, MAX_EDIT_BYTES + 4096) || '{}');
+          if (typeof text !== 'string' || typeof rawPath !== 'string' || rawPath.length > 400) return send(res, 400, { error: 'bad request' });
+          if (Buffer.byteLength(text) > MAX_EDIT_BYTES) return send(res, 413, { error: 'note too large' });
+          const w = writableRoot(vn);
+          if ('err' in w) return send(res, w.err![0], { error: w.err![1] });
+          const segs = rawPath.trim().replace(/\.md$/i, '').split('/');
+          if (!segsOk(segs)) return send(res, 400, { error: NAME_RULE });
+          const dest = path.join(w.root, ...segs) + '.md', rel = segs.join('/') + '.md';
+          if (!insideVault(dest, w.root)) return send(res, 400, { error: 'That folder is not inside the vault.' });
+          if (fs.existsSync(dest)) return send(res, 409, { error: 'A file already exists at that path.' });
+          const clash = current.data.notes.find((x: any) => x.vault === w.v.name && key(baseOf(x.path)) === key(segs[segs.length - 1]));
+          if (clash) return send(res, 409, { error: `A note named "${segs[segs.length - 1]}" already exists in this vault (${clash.path}). Two notes with one name make [[links]] ambiguous.` });
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          if (!(fs.realpathSync(path.dirname(dest)) + path.sep).startsWith(w.root + path.sep)) return send(res, 400, { error: 'That folder is not inside the vault.' });
+          // claim the name with an exclusive create (an existing file is never replaced), then rename a flushed temp file over the empty claim.
+          // Not a hard link: the macOS file watcher misses hard-linked files and their later deletion.
+          try { fs.closeSync(fs.openSync(dest, 'wx', 0o644)); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return send(res, 409, { error: 'A file already exists at that path.' }); throw e; }
+          selfWrites.set(fs.realpathSync(dest), Date.now());
+          try {
+            tmp = path.join(path.dirname(dest), `.${path.basename(dest)}.km-tmp-${process.pid}-${Date.now()}`);
+            const fd = fs.openSync(tmp, 'wx', 0o644);
+            try { fs.writeSync(fd, Buffer.from(text, 'utf8')); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+            fs.renameSync(tmp, dest); tmp = '';
+          } catch (e) { try { if (fs.statSync(dest).size === 0) fs.unlinkSync(dest); } catch {} throw e; }
+          selfWrites.set(fs.realpathSync(dest), Date.now());
+          console.log(`[vault] created ${dest}`);
+          send(res, 200, { ok: true, vault: w.v.name, path: rel });
+        } catch (e) {
+          send(res, (e as Error).message === 'too large' ? 413 : 500, { error: String((e as Error).message || e) });
+        } finally { if (tmp) try { fs.unlinkSync(tmp); } catch {} }
+      });
       server.middlewares.use('/api/delete', async (req, res) => {
         const bad = guard(req, { post: true, token: true });
         if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });

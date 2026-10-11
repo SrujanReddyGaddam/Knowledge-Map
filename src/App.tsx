@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import vault from 'virtual:vault';
+import vault, { safeMode, setSafeMode } from './data';
 import Graph from './Graph';
 import Panel from './Panel';
 import Browse from './Browse';
@@ -10,6 +10,8 @@ import { shortTitle } from './util';
 import { play, tick, VARIANTS, setVolume } from './sound';
 import { PALETTES, applyColors } from './palettes';
 import { buildIndex, runSearch, highlight, type Scope } from './search';
+import { FACETS, facetCounts, facetMatch, typeTints, lintNote, TYPE_GROUPS, type Facet, type FacetSel } from './facets';
+import NewNote from './NewNote';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
 const baseKey = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
@@ -25,25 +27,57 @@ const resolve = (from: typeof vault.notes[number], name: string) => perVault.get
 const order = vault.notes.map(n => n.id);
 const searchIndex = buildIndex(vault.notes);
 const allTags: [string, number][] = (() => { const m = new Map<string, number>(); vault.notes.forEach(n => n.tags.forEach(t => m.set(t, (m.get(t) || 0) + 1))); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); })();
+const facetVals = facetCounts(vault.notes);
+// schema lint (Health tab) for vaults with "lint": true; hubs are notes with type: hub
+const lintIssues = (() => {
+  const hubs = new Set(vault.notes.filter(n => n.type === 'hub').map(n => n.id)), m = new Map<string, string[]>();
+  vault.notes.forEach(n => { if (vault.lintVaults.includes(n.vault)) { const p = lintNote(n, hubs); if (p.length) m.set(n.id, p); } });
+  return m;
+})();
+// a note just created with New note: open it (in the editor) after the reload
+const justCreated = (() => {
+  try {
+    const j = JSON.parse(sessionStorage.getItem('kmOpen') || 'null'); sessionStorage.removeItem('kmOpen');
+    const id = j ? vault.notes.find(n => n.vault === j.vault && n.path === j.path)?.id ?? null : null;
+    if (id) history.replaceState(null, '', location.pathname + location.search + '#' + encodeURIComponent(id));
+    return id;
+  } catch { return null; }
+})();
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
   // an unsaved draft (kept in sessionStorage) reopens the editor after a reload
   const [draft] = useState<Draft | null>(() => { const d = readDraft(); const n = d && byId.get(d.id); return d && n && n.writable && (hashId() === null || hashId() === d.id) ? d : null; });
   const draftRef = useRef<Draft | null>(draft);                  // handed to the editor once; cleared when editing ends so a later edit starts from disk
-  const [selected, setSelected] = useState<string | null>(() => hashId() ?? draft?.id ?? null);
-  const [editId, setEditId] = useState<string | null>(draft?.id ?? null);
+  const [selected, setSelected] = useState<string | null>(() => justCreated ?? hashId() ?? draft?.id ?? null);
+  const [editId, setEditId] = useState<string | null>(justCreated && byId.get(justCreated)?.writable ? justCreated : draft?.id ?? null);
   const editIdRef = useRef(editId); editIdRef.current = editId;
   const dirtyRef = useRef(false), staleRef = useRef(false);      // dirtyRef: unsaved edits; staleRef: our own save happened, data refreshes when editing ends
   const reloadSoon = () => setTimeout(() => location.reload(), 50);
   const endEdit = useCallback(() => { setEditId(null); draftRef.current = null; dirtyRef.current = false; if (staleRef.current) { staleRef.current = false; reloadSoon(); } }, []);
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark');
-  const saved = useRef<{ q?: string; section?: string | null; tags?: string[]; vaults?: string[]; focus?: { id: string; hops: 1 | 2 } | null }>((() => { try { return JSON.parse(sessionStorage.getItem('filters') || '{}'); } catch { return {}; } })()).current;
+  const saved = useRef<{ q?: string; section?: string | null; tags?: string[]; vaults?: string[]; facets?: FacetSel; focus?: { id: string; hops: 1 | 2 } | null }>((() => { try { return JSON.parse(sessionStorage.getItem('filters') || '{}'); } catch { return {}; } })()).current;
   const [query, setQuery] = useState(() => new URLSearchParams(location.search).get('q') ?? saved.q ?? '');
   const [vw, setVw] = useState(innerWidth);
   const [section, setSection] = useState<string | null>(saved.section ?? null);
   const [tags, setTags] = useState<string[]>(saved.tags ?? []);
   const [vaultSel, setVaultSel] = useState<string[]>(() => { const p = new URLSearchParams(location.search).get('vault'); return p ? p.split(',').filter(Boolean) : saved.vaults ?? []; });
+  const [facets, setFacets] = useState<FacetSel>(() => {
+    const out: FacetSel = {}, src = saved.facets ?? {};
+    for (const f of FACETS) { const v = (src[f] ?? []).filter(x => facetVals[f].some(([k]) => k === x)); if (v.length) out[f] = v; }
+    return out;
+  });
+  const [colorBy, setColorBy] = useState<'none' | 'type'>(() => { try { return localStorage.getItem('colorBy') === 'type' ? 'type' : 'none'; } catch { return 'none'; } });
+  useEffect(() => { try { localStorage.setItem('colorBy', colorBy); } catch {} }, [colorBy]);
+  const [newOpen, setNewOpen] = useState(false);
+  // the Browse drawer starts below the search row and the active-filter chips (which wrap and grow), never underneath them
+  const headRef = useRef<HTMLDivElement>(null);
+  const [browseTop, setBrowseTop] = useState(70);
+  useEffect(() => {
+    const el = headRef.current; if (!el) return;
+    const f = () => setBrowseTop(Math.round(el.getBoundingClientRect().bottom + 10));
+    const ro = new ResizeObserver(f); ro.observe(el); f(); return () => ro.disconnect();
+  }, []);
   const [focus, setFocus] = useState<{ id: string; hops: 1 | 2 } | null>(() => (saved.focus && byId.has(saved.focus.id) ? saved.focus : null));
   const [seenState, setSeenState] = useState<Seen>(loadSeen);
   useEffect(() => saveSeen(seenState), [seenState]);
@@ -54,7 +88,7 @@ export default function App() {
   const [browse, setBrowse] = useState(() => { try { return localStorage.getItem('browse') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('browse', browse ? '1' : '0'); } catch {} }, [browse]);
   // Survive the live-reload that follows any vault file change (e.g. deleting a note).
-  useEffect(() => { try { sessionStorage.setItem('filters', JSON.stringify({ q: query, section, tags, vaults: vaultSel, focus })); } catch {} }, [query, section, tags, vaultSel, focus]);
+  useEffect(() => { try { sessionStorage.setItem('filters', JSON.stringify({ q: query, section, tags, vaults: vaultSel, facets, focus })); } catch {} }, [query, section, tags, vaultSel, facets, focus]);
   const [hide, setHide] = useState(() => { try { const m = new URLSearchParams(location.search).get('mode') || localStorage.getItem('filterMode'); return m !== 'dim'; } catch { return true; } });
   useEffect(() => { try { localStorage.setItem('filterMode', hide ? 'hide' : 'dim'); } catch {} }, [hide]);
   const [scope, setScope] = useState<Scope>(() => { try { return localStorage.getItem('searchScope') === 'names' ? 'names' : 'all'; } catch { return 'all'; } });
@@ -99,18 +133,22 @@ export default function App() {
     return seen;
   }, [focus]);
   const matches = useMemo(() => {
-    if (!res && !section && !tags.length && !vaultSel.length && !focusSet) return null;
+    const anyFacet = FACETS.some(f => facets[f]?.length);
+    if (!res && !section && !tags.length && !vaultSel.length && !focusSet && !anyFacet) return null;
     const textOk = res ? new Set(res.hits.map(h => h.note.id)) : null;
     const set = new Set<string>();
     for (const n of vault.notes) {
-      if ((!textOk || textOk.has(n.id)) && (!vaultSel.length || vaultSel.includes(n.vault)) && (!section || n.section === section) && (!focusSet || focusSet.has(n.id)) && tags.every(t => n.tags.includes(t))) set.add(n.id);
+      if ((!textOk || textOk.has(n.id)) && (!vaultSel.length || vaultSel.includes(n.vault)) && (!section || n.section === section) && (!focusSet || focusSet.has(n.id)) && tags.every(t => n.tags.includes(t)) && (!anyFacet || facetMatch(n, facets))) set.add(n.id);
     }
     return set;
-  }, [res, section, tags, vaultSel, focusSet]);
+  }, [res, section, tags, vaultSel, focusSet, facets]);
   const hits = useMemo(() => (res && matches ? res.hits.filter(h => matches.has(h.note.id)) : []), [res, matches]);
   useEffect(() => setCursor(0), [query, scope]);
-  const filterCount = (section ? 1 : 0) + vaultSel.length + tags.length + (focus ? 1 : 0);
-  const clearFilters = () => { setSection(null); setTags([]); setVaultSel([]); setFocus(null); };
+  const facetCount = FACETS.reduce((a, f) => a + (facets[f]?.length || 0), 0);
+  const filterCount = (section ? 1 : 0) + vaultSel.length + tags.length + (focus ? 1 : 0) + facetCount;
+  const clearFilters = () => { setSection(null); setTags([]); setVaultSel([]); setFocus(null); setFacets({}); };
+  const toggleFacet = (f: Facet, v: string) => setFacets(fs => { const cur = fs[f] ?? [], nx = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]; const o = { ...fs }; if (nx.length) o[f] = nx; else delete o[f]; return o; });
+  const tints = useMemo(() => (colorBy === 'type' ? typeTints(vault.notes, dark) : null), [colorBy, dark]);
   const toggleTag = (t: string) => setTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
 
   // Hide mode keeps the open note visible even if it does not match; prev/next skip hidden notes
@@ -151,6 +189,7 @@ export default function App() {
       else if (typing) return;
       else if (e.key === '/') { e.preventDefault(); document.getElementById('search')?.focus(); }
       else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) setBrowse(v => !v);
+      else if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && vault.writableVaults.length && !editIdRef.current) { e.preventDefault(); setNewOpen(true); }
       else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && selNote?.writable && selNote.kind !== 'drawing') { e.preventDefault(); setEditId(selNote.id); }
       else if (e.key === 'ArrowRight' && next) select(next.id);
       else if (e.key === 'ArrowLeft' && prev) select(prev.id);
@@ -176,8 +215,9 @@ export default function App() {
 
   return (
     <>
-      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} markIds={hl && changed.size ? changed : null} hide={hide} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
+      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} markIds={hl && changed.size ? changed : null} tints={tints} hide={hide} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
       <div className="search-wrap">
+        <div ref={headRef}>
         <div className="search-row">
           <input id="search" value={query} onChange={e => setQuery(e.target.value)} placeholder={"Search notes   /  or  \u2318O"} autoComplete="off" spellCheck={false}
             onKeyDown={e => {
@@ -190,6 +230,9 @@ export default function App() {
             {changed.size > 0 && <span className="count-badge">{changed.size > 99 ? '99+' : changed.size}</span>}
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7" /></svg>
           </button>
+          {vault.writableVaults.length > 0 && <button className="icon-btn" onClick={() => setNewOpen(true)} aria-label="New note" title="New note from a template  (n)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M8 3v10M3 8h10" /></svg>
+          </button>}
           <button className={'icon-btn' + (filterOpen || filterCount ? ' on' : '')} onClick={() => setFilterOpen(v => !v)} aria-label="Filters" title="Filter by section or tag">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3.5h12L9.5 9v4l-3-1.5V9z" /></svg>
             {filterCount > 0 && <span className="count-badge">{filterCount}</span>}
@@ -202,6 +245,7 @@ export default function App() {
             {vaultSel.map(v => <button key={v} className="chip active" onClick={() => setVaultSel(vaultSel.filter(x => x !== v))}>{v} &times;</button>)}
             {section && <button className="chip active" onClick={() => setSection(null)}>{section.replace(/-/g, ' ')} &times;</button>}
             {tags.map(t => <button key={t} className="chip active" onClick={() => toggleTag(t)}>{t} &times;</button>)}
+            {FACETS.flatMap(f => (facets[f] ?? []).map(v => <button key={f + v} className="chip active" onClick={() => toggleFacet(f, v)}>{f}: {v} &times;</button>))}
             <span className="match-count">{matches.size} of {vault.notes.length}</span>
             <div className="seg" role="group" aria-label="Non-matching notes">
               <button className={!hide ? 'on' : ''} onClick={() => setHide(false)} title="Fade non-matching notes">Dim</button>
@@ -209,6 +253,7 @@ export default function App() {
             </div>
           </div>
         )}
+        </div>
         {filterOpen && (
           <div className="filter-pop" role="dialog">
             <div className="seg-row"><span className="eyebrow">Non-matching notes</span><div className="seg" role="group" aria-label="Non-matching notes">
@@ -223,6 +268,12 @@ export default function App() {
             <div className="sec-list">{vault.sections.filter(sx => !vaultSel.length || vault.notes.some(n => n.section === sx && vaultSel.includes(n.vault))).map(sx => (
               <button key={sx} className={'chip' + (section === sx ? ' active' : '')} onClick={() => setSection(section === sx ? null : sx)}>{sx.replace(/-/g, ' ')} <small>{vault.notes.filter(n => n.section === sx).length}</small></button>
             ))}</div>
+            {FACETS.filter(f => facetVals[f].length).map(f => <div key={f}>
+              <div className="eyebrow"><span>{f[0].toUpperCase() + f.slice(1)}</span></div>
+              <div className="sec-list">{facetVals[f].map(([v, c]) => {
+                const g = f === 'type' && colorBy === 'type' ? TYPE_GROUPS.find(x => x.types.includes(v)) : null;
+                return <button key={v} className={'chip' + (facets[f]?.includes(v) ? ' active' : '')} onClick={() => toggleFacet(f, v)}>{g && <i className="type-dot" style={{ background: dark ? g.dark : g.light }} />}{v} <small>{c}</small></button>;
+              })}</div></div>)}
             <div className="eyebrow"><span>Tags (note must have all selected)</span></div>
             <div className="sec-list tag-list">{allTags.map(([t, c]) => (
               <button key={t} className={'chip tag' + (tags.includes(t) ? ' active' : '')} onClick={() => toggleTag(t)}>{t} <small>{c}</small></button>
@@ -241,19 +292,19 @@ export default function App() {
               </button>
             )) : <div className="empty">No notes match.{scope === 'names' && <button className="link" onClick={() => setScope('all')}>Search inside note text too</button>}</div>}
             {hits.length > 25 && <div className="res-more">Showing 25 of {hits.length}. All matches are on the map.</div>}
-            <div className="res-tips">Tips: <code>"exact phrase"</code> <code>-skip</code> <code>tag:agents</code> <code>vault:Jarvis</code> <code>path:wiki</code></div>
+            <div className="res-tips">Tips: <code>"exact phrase"</code> <code>-skip</code> <code>tag:agents</code> <code>vault:Jarvis</code> <code>path:wiki</code> <code>type:bug</code> <code>-status:stale</code></div>
           </div>
         )}
       </div>
- {browse && <Browse notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
+ {browse && <Browse top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
         {info && (
           <div className="info-pop" role="dialog">
             <div className="eyebrow">Knowledge map</div>
-            <p><b>{vault.vaults.join(' + ')}</b><br />{vault.notes.length} notes, {vault.edges.length} links{vault.broken.length ? `, ${vault.broken.length} broken wikilinks` : ''}</p>
+            <p><b>{vault.vaults.join(' + ')}</b><br />{vault.notes.length} notes, {vault.edges.length} links{vault.broken.length ? `, ${vault.broken.length} broken wikilinks` : ''}{safeMode ? `. Safe mode: ${vault.hiddenCount} notes hidden` : ''}</p>
             <div className="eyebrow">Controls</div>
-            <p className="keys"><kbd>drag</kbd> pan &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> rotate &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
+            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
           </div>
         )}
       </div>
@@ -267,6 +318,14 @@ export default function App() {
             ))}
           </div>
         )}
+        <button className={'icon-btn' + (safeMode ? ' on safe' : '')} aria-pressed={safeMode} aria-label="Safe mode" title={safeMode ? `Safe mode on: only notes marked public or internal are shown (${vault.hiddenCount} hidden). Click to show everything` : 'Safe mode for screen sharing: show only notes marked public or internal'}
+          onClick={() => setSafeMode(!safeMode)}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><path d="M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z" />{safeMode && <path d="M5.5 8l1.8 1.8 3.3-3.6" strokeLinecap="round" />}</svg>
+        </button>
+        <button className={'icon-btn' + (colorBy === 'type' ? ' on' : '')} aria-pressed={colorBy === 'type'} aria-label="Color by type" title={colorBy === 'type' ? 'Coloring notes by type. Click to turn off' : 'Color notes by type'}
+          onClick={() => setColorBy(c => (c === 'type' ? 'none' : 'type'))}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="5" cy="5.5" r="2.6" /><circle cx="11" cy="5.5" r="2.6" /><circle cx="8" cy="11" r="2.6" /></svg>
+        </button>
         <button className={'icon-btn' + (focusMode ? ' on' : '')} aria-pressed={focusMode} aria-label="Focus mode" title={focusMode ? 'Focus mode on: every note you pick becomes the focus. Esc to leave' : 'Focus mode: every note you pick becomes the focus until Esc'}
           onClick={() => { if (focusMode) { setFocusMode(false); setFocus(null); } else { setFocusMode(true); if (selNote) setFocus({ id: selNote.id, hops: hopsRef.current }); } }}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.2" fill="currentColor" /><circle cx="8" cy="8" r="5.6" /><path d="M8 0.8v2.2M8 13v2.2M0.8 8H3M13 8h2.2" /></svg>
@@ -292,6 +351,12 @@ export default function App() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2 6h2.5L8 3v10L4.5 10H2z" />{soundId !== 'off' ? <><path d="M10.5 5.5a3.5 3.5 0 0 1 0 5" /><path d="M12.5 3.5a6.5 6.5 0 0 1 0 9" /></> : <path d="M11 6l3.5 4M14.5 6L11 10" />}</svg>
         </button>
       </div>
+      {colorBy === 'type' && <div className="type-legend" style={{ right: panelW + 20 }} aria-label="Color legend">
+        {TYPE_GROUPS.map(g => <span key={g.key} title={g.types.join(', ')}><i className="type-dot" style={{ background: dark ? g.dark : g.light }} />{g.label}</span>)}
+        <span title="every other type, or no type"><i className="type-dot neutral" />Other</span>
+      </div>}
+      {safeMode && <button className="safe-badge" onClick={() => setSafeMode(false)} title="Click to leave safe mode">Safe mode: {vault.hiddenCount} notes hidden</button>}
+      {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} />}
       <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
         onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onClose={() => select(null)} />
     </>

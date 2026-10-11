@@ -151,7 +151,7 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .btn.danger { color:#b3392b; border-color:#b3392b55; } .btn.danger:hover { background:#b3392b18; } .btn.danger.solid { background:#b3392b; color:#fff; border-color:#b3392b; }
 
 /* search wrap widened for the browse button */
-.search-wrap { width:330px; }
+.search-wrap { width:374px; }
 
 /* browse drawer: recent, tree, health */
 .browse { position:fixed; left:20px; top:70px; bottom:20px; width:330px; z-index:9; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:16px; box-shadow:0 14px 50px #0002; animation:fade .25s ease; overflow:hidden; }
@@ -263,3 +263,20 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
 .cm-tooltip-autocomplete { background:var(--panel) !important; border:1px solid var(--ink) !important; border-radius:12px; padding:4px; box-shadow:0 8px 30px #0003; color:var(--ink); } .cm-tooltip-autocomplete ul { font:13px var(--sans) !important; } .cm-tooltip-autocomplete li { border-radius:8px; padding:5px 10px !important; display:flex; flex-direction:column; align-items:flex-start; } .cm-tooltip-autocomplete li[aria-selected] { background:var(--ink) !important; color:var(--bg) !important; } .cm-completionDetail { font:10.5px var(--mono) !important; margin:0 !important; opacity:.65; font-style:normal !important; }
 .ed-tools { display:flex; flex-wrap:wrap; gap:4px; align-items:center; flex:none; } .ed-tools > button { all:unset; cursor:pointer; min-width:28px; height:28px; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; padding:0 7px; border-radius:8px; font:600 12px var(--mono); color:var(--ink); } .ed-tools > button:hover { background:var(--soft); }
 .ed-mode { margin-left:auto; } .ed-mode button { all:unset; cursor:pointer; font:10.5px var(--mono); letter-spacing:.06em; color:var(--mute); padding:5px 8px; border-radius:8px; } .ed-mode button:hover { background:var(--soft); color:var(--ink); }
+
+/* color by type: legend above the corner buttons, dots also used in the Type filter chips */
+.type-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:0; flex:none; }
+.type-dot.neutral { background:var(--far); box-shadow:inset 0 0 0 1px var(--line); }
+.type-legend { position:fixed; bottom:64px; z-index:5; display:flex; gap:14px; flex-wrap:wrap; justify-content:flex-end; max-width:60vw; padding:7px 12px; border:1px solid var(--line); border-radius:999px; background:var(--panel); font:11px var(--mono); color:var(--ink); transition:right .35s ease; }
+.type-legend span { display:inline-flex; align-items:center; white-space:nowrap; }
+/* safe mode */
+.icon-btn.safe { color:var(--accent); border-color:var(--accent); }
+.safe-badge { position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:6; cursor:pointer; border:1px solid var(--accent); background:var(--panel); color:var(--ink); border-radius:999px; padding:5px 14px; font:11px var(--mono); letter-spacing:.04em; }
+/* new note dialog */
+.modal-back { position:fixed; inset:0; z-index:40; background:#0003; display:flex; align-items:flex-start; justify-content:center; padding-top:12vh; animation:fade .15s ease; }
+.newnote { width:min(460px, 92vw); background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:18px 20px; box-shadow:0 20px 60px #0003; }
+.newnote label.rn-label { display:flex; flex-direction:column; gap:5px; }
+.newnote select.rn-input { appearance:auto; }
+@media print { .type-legend, .safe-badge, .modal-back { display:none !important; } }
+/* with the frontmatter facets the filter popover can be taller than the window: scroll it as a whole */
+.filter-pop { max-height:calc(100vh - 90px); overflow:auto; overscroll-behavior:contain; }

@@ -2,38 +2,47 @@ import type { Note } from 'virtual:vault';
 
 // Search: every word must match somewhere (AND), names are matched fuzzily, text matches come with a snippet.
 // Syntax:  word word   "exact phrase"   -exclude   tag:foo   vault:name   path:folder
+//          any frontmatter field: type:bug  customer:acme  status:current  -sensitivity:personal  (substring match, case-insensitive)
 
 export type Scope = 'names' | 'all';
 export type Hit = { note: Note; score: number; where: 'name' | 'meta' | 'text'; snippet?: string };
 export type Result = { hits: Hit[]; terms: string[] };
 
-type Ix = { note: Note; title: string; file: string; path: string; vault: string; tags: string[]; tagStr: string; summary: string; plain: string; plainLower: string };
+type Ix = { note: Note; fields: Record<string, string>; title: string; file: string; path: string; vault: string; tags: string[]; tagStr: string; summary: string; plain: string; plainLower: string };
 
 const strip = (md: string) => md
   .replace(/```[\s\S]*?```/g, ' ').replace(/<[^>]+>/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
   .replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, a, b) => b || a).replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
   .replace(/(^|\n)\s*[-+*>]\s+/g, '$1').replace(/[#*_`|~]+/g, ' ').replace(/\s+/g, ' ').trim();
 
+let fieldKeys = new Set<string>();   // only real frontmatter keys act as operators, so "https://..." stays a plain word
 export function buildIndex(notes: Note[]): Ix[] {
+  fieldKeys = new Set(['type', 'customer', 'project', 'sensitivity', 'status']);
   return notes.map(n => {
     const plain = strip(n.body);
+    const fields: Record<string, string> = {};
+    for (const [k, v] of Object.entries(n.meta)) { fields[k] = v.toLowerCase(); fieldKeys.add(k); }
+    Object.assign(fields, { type: n.type, customer: n.customer, project: n.project, sensitivity: n.sensitivity, status: n.status === 'none' || n.status === 'unknown' ? '' : n.status });
     return {
-      note: n, title: n.title.toLowerCase(), file: (n.path.split('/').pop() || '').replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').toLowerCase(),
+      note: n, fields, title: n.title.toLowerCase(), file: (n.path.split('/').pop() || '').replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').toLowerCase(),
       path: n.path.toLowerCase(), vault: n.vault.toLowerCase(), tags: n.tags.map(t => t.toLowerCase()), tagStr: n.tags.join(' ').toLowerCase(),
       summary: n.summary.toLowerCase(), plain, plainLower: plain.toLowerCase(),
     };
   });
 }
 
-type Parsed = { terms: string[]; phrases: string[]; neg: string[]; tag: string[]; vault: string[]; path: string[] };
+type Field = { k: string; v: string; neg: boolean };
+type Parsed = { terms: string[]; phrases: string[]; neg: string[]; tag: string[]; vault: string[]; path: string[]; fields: Field[] };
 export function parse(q: string): Parsed {
-  const p: Parsed = { terms: [], phrases: [], neg: [], tag: [], vault: [], path: [] };
+  const p: Parsed = { terms: [], phrases: [], neg: [], tag: [], vault: [], path: [], fields: [] };
   for (const m of q.matchAll(/(-?"[^"]+")|(\S+)/g)) {
     const tok = m[0];
     if (tok.startsWith('-"')) { p.neg.push(tok.slice(2, -1).toLowerCase()); continue; }
     if (tok.startsWith('"')) { p.phrases.push(tok.slice(1, -1).toLowerCase()); continue; }
     const t = tok.toLowerCase(), op = t.match(/^(tag|vault|path):(.+)$/);
     if (op) { p[op[1] as 'tag' | 'vault' | 'path'].push(op[2].replace(/^#/, '')); continue; }
+    const fo = t.match(/^(-?)([a-z_][\w-]*):(.*)$/);
+    if (fo && fieldKeys.has(fo[2])) { if (fo[3]) p.fields.push({ k: fo[2], v: fo[3].replace(/^"|"$/g, ''), neg: fo[1] === '-' }); continue; }
     if (t.startsWith('-') && t.length > 1) { p.neg.push(t.slice(1)); continue; }
     if (t === '-' || /^(tag|vault|path):$/.test(t)) continue;   // still typing an operator
     p.terms.push(t);
@@ -88,10 +97,11 @@ function snippetOf(x: Ix, needles: string[]): string | undefined {
 
 export function runSearch(index: Ix[], query: string, scope: Scope): Result | null {
   const q = parse(query);
-  const hasWork = q.terms.length || q.phrases.length || q.tag.length || q.vault.length || q.path.length || q.neg.length;
+  const hasWork = q.terms.length || q.phrases.length || q.tag.length || q.vault.length || q.path.length || q.neg.length || q.fields.length;
   if (!hasWork) return null;
   const all = scope === 'all', hits: Hit[] = [];
   for (const x of index) {
+    if (q.fields.some(f => (x.fields[f.k] || '').includes(f.v) === f.neg)) continue;
     if (q.vault.some(v => !x.vault.includes(v)) || q.path.some(p => !x.path.includes(p)) || q.tag.some(t => !x.tags.some(g => g.includes(t)))) continue;
     if (q.neg.some(w => x.title.includes(w) || x.file.includes(w) || (all && (x.plainLower.includes(w) || x.tagStr.includes(w))))) continue;
     let score = 0, where: Hit['where'] = 'name', ok = true; const need: string[] = [];
