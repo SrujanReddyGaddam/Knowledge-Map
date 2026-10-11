@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import LZString from 'lz-string';
 import type { Plugin } from 'vite';
-import { rewriteLinks, otherRelativeRefs } from './rename-links';
+import { rewriteLinks, otherRelativeRefs, outsideCode, withoutCode } from './rename-links';
 import { parseFrontmatter } from './frontmatter';
 
 // sectionDepth: folders whose sections go one level deeper, e.g. { "projects": 2 } gives "projects/acme".
@@ -34,7 +34,9 @@ function walk(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-const key = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').toLowerCase();
+// fullKey keeps .excalidraw so x.md and x.excalidraw.md stay apart; key is the looser name ([[x]] may still mean a drawing x when there is no note x)
+const fullKey = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
+const key = (s: string) => fullKey(s).replace(/\.excalidraw$/i, '');
 const wikilinks = (t: string) => [...t.matchAll(/(?<!!)\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(m => m[1].trim());
 // [text](./other.md) style links between notes (never http, never images)
 const mdlinks = (t: string) => [...t.matchAll(/(?<!!)\[[^\]]*\]\((?!https?:|mailto:|#)([^)\s]+?\.md)(?:#[^)]*)?\)/g)].map(m => decodeURIComponent(m[1]).trim());
@@ -79,7 +81,7 @@ function metaOf(fm: Record<string, any>) {
 const one = (v: unknown) => (Array.isArray(v) ? String(v[0] ?? '') : String(v ?? '')).trim().replace(/^\[\[|\]\]$/g, '');
 
 type RawNote = {
-  vi: number; vault: string; base: string; path: string; abs: string; folder: string; title: string; tags: string[]; status: string; source: string; fetched: string;
+  vi: number; vault: string; base: string; fkey: string; path: string; abs: string; folder: string; title: string; tags: string[]; status: string; source: string; fetched: string;
   summary: string; body: string; related: string[]; rawLinks: string[]; id: string; links: string[]; backlinks: string[]; section: string;
   type: string; customer: string; project: string; sensitivity: string; meta: Record<string, string>;
   kind?: 'drawing'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number; writable: boolean;
@@ -130,23 +132,23 @@ function loadVaults(cfg: Config) {
       const h1 = body.replace(/^(```|~~~)[\s\S]*?^\1/gm, '').match(/^#\s+(.+)$/m)?.[1]?.trim();   // a '# comment' inside a code block is not a heading
       const tags = [...new Set([...asList(fm.tags), ...(typeof fm.type === 'string' && fm.type ? [fm.type] : []), ...(scene ? ['excalidraw'] : [])])];
       const status = String(fm.status || '').toLowerCase().match(/current|stale|needs-verification|draft|closed|deprecated|archived/)?.[0] || (hasFm ? 'unknown' : 'none');
-      const rewritten = body.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (m, name: string) => {
+      const rewritten = outsideCode(body, s => s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (m, name: string) => {
         const b = path.basename(name.trim());
         if (!images.has(b)) return m;
         usedAssets.add(`${vi}/${b}`);
         return `![${b}](/vault-assets/${vi}/${encodeURIComponent(b)})`;
-      });
+      }));
       const depth = Math.max(1, Math.min(4, v.sectionDepth[parts[0]] || 1));
       const folder = parts.length > 1 ? parts.slice(0, Math.min(depth, parts.length - 1)).join('/') : v.rootSection;
       raws.push({
-        vi, vault: v.name, base, path: rel, abs: path.resolve(v.path, rel), folder, id: base, section: multi ? `${v.name} / ${folder}` : folder,
+        vi, vault: v.name, base, fkey: fullKey(path.basename(f)), path: rel, abs: path.resolve(v.path, rel), folder, id: base, section: multi ? `${v.name} / ${folder}` : folder,
         title: (fm.title as string) || h1 || base, tags, status,
         source: fm.source && fm.source !== 'none' ? String(fm.source) : '', fetched: String(fm.source_fetched || fm.updated || fm.date || ''),
         summary: scene ? `Excalidraw drawing, ${scene.elements.length} elements.${drawingText ? ' ' + drawingText.trim().split(/\n+/)[0].slice(0, 90) : ''}` : (typeof fm.summary === 'string' && fm.summary ? fm.summary.slice(0, 320) : summaryOf(body)),
         ...(scene ? { kind: 'drawing' as const, scene } : {}),
         type: one(fm.type).toLowerCase(), customer: one(fm.customer).toLowerCase(), project: one(fm.project).toLowerCase(),
         sensitivity: (one(fm.sensitivity) || v.sensitivity).toLowerCase(), meta: metaOf(fm),
-        mtime, writable: v.writable && !scene && f.endsWith('.md'), body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: [...wikilinks(body), ...mdlinks(body)], links: [], backlinks: [],
+        mtime, writable: v.writable && !scene && f.endsWith('.md'), body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: (prose => [...wikilinks(prose), ...mdlinks(prose)])(withoutCode(body)), links: [], backlinks: [],
       });
     }
   });
@@ -157,13 +159,23 @@ function loadVaults(cfg: Config) {
   raws.forEach(n => { if (count.get(n.base)! > 1) n.id = `${n.vault}/${n.path.replace(/\.md$/, '')}`; });
 
   // link resolution: same vault first, then any other vault
-  const perVault = vaults.map((_, vi) => new Map(raws.filter(n => n.vi === vi).map(n => [key(n.base), n])));
-  const global = new Map<string, RawNote>();
-  raws.forEach(n => { if (!global.has(key(n.base))) global.set(key(n.base), n); });
+  // exact file name first ([[x.excalidraw]] is the drawing), then the loose name, where a note beats a drawing ([[x]] is x.md)
+  const lookup = (list: RawNote[], lastWins: boolean) => {
+    const exact = new Map<string, RawNote>(), loose = new Map<string, RawNote>();
+    for (const n of list) {
+      if (lastWins || !exact.has(n.fkey)) exact.set(n.fkey, n);
+      const k = key(n.fkey), cur = loose.get(k);
+      if (!cur || (cur.kind === 'drawing' && n.kind !== 'drawing') || (lastWins && (cur.kind === 'drawing') === (n.kind === 'drawing'))) loose.set(k, n);
+    }
+    return (t: string) => exact.get(fullKey(t)) ?? loose.get(key(t));
+  };
+  const perVaultFind = vaults.map((_, vi) => lookup(raws.filter(n => n.vi === vi), true));
+  const globalFind = lookup(raws, false);
+  const find = (n: RawNote, t: string) => perVaultFind[n.vi](t) ?? globalFind(t);
   const edges = new Set<string>();
   for (const n of raws) {
     for (const t of new Set([...n.related, ...n.rawLinks])) {
-      const tn = perVault[n.vi].get(key(t)) ?? global.get(key(t));
+      const tn = find(n, t);
       if (!tn) { broken.push(`${n.vault}: ${n.path} -> [[${t}]]`); brokenLinks.push({ from: n.id, target: t }); continue; }
       if (tn.id === n.id) continue;
       if (!n.links.includes(tn.id)) n.links.push(tn.id);
@@ -172,12 +184,12 @@ function loadVaults(cfg: Config) {
   }
   // ![[some.excalidraw]] embeds: swap for a placeholder the panel renders as the drawing, and link the notes
   for (const n of raws) {
-    n.body = n.body.replace(/!\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g, (m: string, name: string) => {
-      const tn = perVault[n.vi].get(key(name)) ?? global.get(key(name));
+    n.body = outsideCode(n.body, s => s.replace(/!\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g, (m: string, name: string) => {
+      const tn = find(n, name);
       if (!tn || tn.kind !== 'drawing') return m;
       if (tn.id !== n.id) { if (!n.links.includes(tn.id)) n.links.push(tn.id); edges.add([n.id, tn.id].sort().join('\u0000')); }
       return `\n\n<div class="xl-embed" data-id="${tn.id.replace(/"/g, '&quot;')}"></div>\n\n`;
-    });
+    }));
   }
   for (const n of raws) n.backlinks = raws.filter(o => o.links.includes(n.id)).map(o => o.id);
 
@@ -185,7 +197,7 @@ function loadVaults(cfg: Config) {
   raws.sort((a, b) => a.vi - b.vi || sections.indexOf(a.section) - sections.indexOf(b.section) || a.title.localeCompare(b.title));
   const data = {
     vaultName: vaults[0]?.name ?? '', vaults: vaults.map(v => v.name), lintVaults: vaults.filter(v => v.lint).map(v => v.name), writableVaults: vaults.filter(v => v.writable).map(v => v.name), generated: new Date().toISOString(), sections,
-    notes: raws.map(({ vi, base, folder, related, rawLinks, ...n }) => n),
+    notes: raws.map(({ vi, base, fkey, folder, related, rawLinks, ...n }) => n),
     edges: [...edges].map(e => e.split('\u0000')),
     broken, brokenLinks,
   };
@@ -386,7 +398,7 @@ export default function vault(): Plugin {
         if (baseChanged) {
           const clash = sameVault.find((x: any) => key(baseOf(x.path)) === key(newBase) && !(caseOnly));
           if (clash) return { err: [409, `A note named "${newBase}" already exists in this vault (${clash.path}). Two notes with one name make [[links]] ambiguous.`] as [number, string] };
-          if (sameVault.some((x: any) => key(baseOf(x.path)) === oldKey)) return { err: [409, 'Another note in this vault has the same name, so links to it are ambiguous. Rename it in Obsidian.'] as [number, string] };
+          if (sameVault.some((x: any) => fullKey(baseOf(x.path)) === oldKey)) return { err: [409, 'Another note in this vault has the same name, so links to it are ambiguous. Rename it in Obsidian.'] as [number, string] };
         }
         const vIdx = current.vaults.findIndex(v => v.name === f.n.vault);
         const earlier = (vn: string) => current.vaults.findIndex(v => v.name === vn) < vIdx;
@@ -396,8 +408,8 @@ export default function vault(): Plugin {
         for (const n of current.data.notes as any[]) {
           if (n.kind === 'drawing') continue;
           const isSelf = n.id === f.n.id;
-          const wiki = n.vault === f.n.vault || (!current.data.notes.some((x: any) => x.vault === n.vault && key(baseOf(x.path)) === oldKey)
-            && !current.data.notes.some((x: any) => x.vault !== f.n.vault && earlier(x.vault) && key(baseOf(x.path)) === oldKey));
+          const wiki = n.vault === f.n.vault || (!current.data.notes.some((x: any) => x.vault === n.vault && fullKey(baseOf(x.path)) === oldKey)
+            && !current.data.notes.some((x: any) => x.vault !== f.n.vault && earlier(x.vault) && fullKey(baseOf(x.path)) === oldKey));
           let orig: Buffer; try { orig = fs.readFileSync(isSelf ? f.abs : n.abs); } catch { continue; }
           if (orig.length > MAX_EDIT_BYTES) { if (orig.toString('utf8').toLowerCase().includes(oldKey)) blocked.push(`${n.path} is too large to update`); continue; }
           const text = orig.toString('utf8');

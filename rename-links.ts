@@ -14,9 +14,12 @@ export type LinkCtx = {
   selfNew: string;
 };
 
-const key = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').toLowerCase();
+// keeps .excalidraw: [[x.excalidraw]] names the drawing, not a note x.md (only .md notes are renamed)
+const key = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
 const CODE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/;
 export const outsideCode = (t: string, fn: (s: string) => string) => t.split(CODE).map((s, i) => (i % 2 ? s : fn(s))).join('');
+// the text with code blocks and spans removed, for link extraction (Obsidian does not link inside code)
+export const withoutCode = (t: string) => t.split(CODE).filter((_, i) => i % 2 === 0).join(' ');
 const dec = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 
 const WIKI = /(!?\[\[)([^\]|#\n]+?)((?:#[^\]|\n]*)?(?:\|[^\]\n]*)?\]\])/g;

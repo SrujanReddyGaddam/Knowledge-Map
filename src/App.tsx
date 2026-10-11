@@ -14,16 +14,22 @@ import { FACETS, facetCounts, facetMatch, typeTints, lintNote, TYPE_GROUPS, type
 import NewNote from './NewNote';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
+// same rules as the server: exact file name first ([[x.excalidraw]] is the drawing), then the name without .excalidraw, where a note beats a drawing
 const baseKey = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
-const perVault = new Map<string, Map<string, typeof vault.notes[number]>>();
-const globalByBase = new Map<string, typeof vault.notes[number]>();
+const looseKey = (s: string) => baseKey(s).replace(/\.excalidraw$/i, '');
+type N = typeof vault.notes[number];
+const perVault = new Map<string, Map<string, N>>(), perVaultLoose = new Map<string, Map<string, N>>();
+const globalByBase = new Map<string, N>(), globalLoose = new Map<string, N>();
+const addLoose = (m: Map<string, N>, n: N) => { const k = looseKey(n.path), cur = m.get(k); if (!cur || (cur.kind === 'drawing' && n.kind !== 'drawing')) m.set(k, n); };
 vault.notes.forEach(n => {
   const k = baseKey(n.path);
-  if (!perVault.has(n.vault)) perVault.set(n.vault, new Map());
+  if (!perVault.has(n.vault)) { perVault.set(n.vault, new Map()); perVaultLoose.set(n.vault, new Map()); }
   if (!perVault.get(n.vault)!.has(k)) perVault.get(n.vault)!.set(k, n);
   if (!globalByBase.has(k)) globalByBase.set(k, n);
+  addLoose(perVaultLoose.get(n.vault)!, n); addLoose(globalLoose, n);
 });
-const resolve = (from: typeof vault.notes[number], name: string) => perVault.get(from.vault)?.get(baseKey(name)) ?? globalByBase.get(baseKey(name));
+const resolve = (from: N, name: string) => perVault.get(from.vault)?.get(baseKey(name)) ?? perVaultLoose.get(from.vault)?.get(looseKey(name))
+  ?? globalByBase.get(baseKey(name)) ?? globalLoose.get(looseKey(name));
 const order = vault.notes.map(n => n.id);
 const searchIndex = buildIndex(vault.notes);
 const allTags: [string, number][] = (() => { const m = new Map<string, number>(); vault.notes.forEach(n => n.tags.forEach(t => m.set(t, (m.get(t) || 0) + 1))); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); })();
