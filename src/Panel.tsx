@@ -8,11 +8,12 @@ import History from './History';
 import Rename from './Rename';
 import type { Note } from 'virtual:vault';
 import { esc, restTitle, shortTitle } from './util';
+import { facetOf, type Facet } from './facets';
 
 type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
   open: boolean; note: Note | null; index: number; total: number; byId: Map<string, Note>; resolve: (from: Note, name: string) => Note | undefined;
-  prev: Note | null; next: Note | null; onNav: (id: string) => void; onTag: (t: string) => void; onClose: () => void; onDelete: (id: string) => Promise<string | null>;
+  prev: Note | null; next: Note | null; onNav: (id: string) => void; onTag: (t: string) => void; onFacet: (f: Facet, v: string) => void; tint?: string; onClose: () => void; onDelete: (id: string) => Promise<string | null>;
   editing: boolean; draft: Draft | null; onEdit: () => void; onEditEnd: (saved: boolean) => void; onSaved: (id: string, mtime: number) => void; onDirty: (d: boolean) => void;
 };
 
@@ -29,6 +30,15 @@ const mention = (from: Note, target: Note) => {
   return t.length > 170 ? t.slice(0, 168) + '..' : t;
 };
 
+const ago = (ms: number) => {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.round(h / 24); if (d < 30) return d === 1 ? 'yesterday' : d + ' days ago';
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+};
+const HEAD_FACETS: Facet[] = ['type', 'customer', 'project', 'status', 'sensitivity'];
+
 // Prints just the note (see @media print in styles.css). The browser's print dialog has Save as PDF; the title becomes the file name.
 function exportPdf(title: string) {
   const old = document.title, done = () => { document.title = old; removeEventListener('afterprint', done); };
@@ -37,7 +47,7 @@ function exportPdf(title: string) {
   requestAnimationFrame(() => print());
 }
 
-export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onClose, onDelete, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
+export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onFacet, tint, onClose, onDelete, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
   const [tocOpen, setTocOpen] = useState(false);
   const [hist, setHist] = useState(false);
   const [ren, setRen] = useState(false);
@@ -58,9 +68,13 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState('');
   const [resizing, setResizing] = useState(false);
+  const [serif, setSerif] = useState(() => { try { return localStorage.getItem('readFont') === 'serif'; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem('readFont', serif ? 'serif' : 'sans'); } catch {} }, [serif]);
+  const progRef = useRef<HTMLDivElement>(null);
+  const onBodyScroll = () => { hideCard(); const b = bodyRef.current, p = progRef.current; if (b && p) { const max = b.scrollHeight - b.clientHeight; p.style.transform = `scaleX(${max > 4 ? b.scrollTop / max : 0})`; } };
   const bodyRef = useRef<HTMLDivElement>(null);
   const mdRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { setExpanded(false); setCopied(''); bodyRef.current?.scrollTo(0, 0); }, [note?.id]);
+  useEffect(() => { setExpanded(false); setCopied(''); bodyRef.current?.scrollTo(0, 0); if (progRef.current) progRef.current.style.transform = 'scaleX(0)'; }, [note?.id]);
 
   const { html, toc } = useMemo((): { html: string; toc: Toc } => {
     if (!note) return { html: '', toc: [] };
@@ -114,7 +128,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const sub = note ? restTitle(note.title) : '';
 
   return (
-    <aside className={'panel' + (open ? ' open' : '') + (resizing ? ' resizing' : '') + (maxed ? ' max' : '')} aria-hidden={!open} style={{ width, ['--fs' as string]: fs }}>
+    <aside className={'panel' + (open ? ' open' : '') + (resizing ? ' resizing' : '') + (maxed ? ' max' : '') + (serif ? ' serif' : '')} aria-hidden={!open} style={{ width, ['--fs' as string]: fs, ['--band' as string]: tint || 'var(--accent)' }}>
       {!maxed && <div className="p-resize" title="Drag to resize" onPointerDown={e => { e.preventDefault(); (e.target as HTMLElement).setPointerCapture(e.pointerId); setResizing(true); }}
         onPointerMove={e => { if (resizing) onResize(innerWidth - e.clientX); }} onPointerUp={() => setResizing(false)} onPointerCancel={() => setResizing(false)} onDoubleClick={() => onResize(0)} />}
       {note && (
@@ -122,9 +136,10 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
           <header className="p-head">
             <span className="eyebrow">{note.section.replace(/-/g, ' ')}</span>
             <span className="p-head-right">
-              <span className="fs-ctl" title="Text size"><button onClick={() => onFs(Math.max(0.8, +(fs - 0.1).toFixed(2)))} aria-label="Smaller text">A&minus;</button><button onClick={() => onFs(1)} aria-label="Reset text size" className="fs-val">{Math.round(fs * 100)}%</button><button onClick={() => onFs(Math.min(1.7, +(fs + 0.1).toFixed(2)))} aria-label="Larger text">A+</button></span>
+              <span className="fs-ctl" title="Text size"><button className={'font-btn' + (serif ? ' on' : '')} onClick={() => setSerif(v => !v)} aria-pressed={serif} aria-label="Serif reading font" title={serif ? 'Serif reading font on. Click for sans' : 'Read in a serif font'}>Aa</button><button onClick={() => onFs(Math.max(0.8, +(fs - 0.1).toFixed(2)))} aria-label="Smaller text">A&minus;</button><button onClick={() => onFs(1)} aria-label="Reset text size" className="fs-val">{Math.round(fs * 100)}%</button><button onClick={() => onFs(Math.min(1.7, +(fs + 0.1).toFixed(2)))} aria-label="Larger text">A+</button></span>
               <button className="icon-btn" onClick={onMax} aria-label={maxed ? 'Exit full screen' : 'Full screen'} title={maxed ? 'Exit full screen (Esc)' : 'Full screen'}>{maxed ? '\u2923' : '\u2922'}</button>
               <span className="idx"><b>{index + 1}</b> / {total}</span><button className="icon-btn" onClick={onClose} aria-label="Close">&times;</button></span>
+            <div className="p-band" /><div className="p-prog" ref={progRef} />
           </header>
           {ren && note.writable && !editing ? (
             <div className="p-body editing" key={'ren-' + note.id}>
@@ -142,14 +157,19 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               <Editor note={note} draft={draft} onEnd={onEditEnd} onSaved={mt => onSaved(note.id, mt)} onDirty={onDirty} />
             </div>
           ) : (
-          <div className="p-body" ref={bodyRef} key={note.id} onScroll={hideCard}>
+          <div className="p-body" ref={bodyRef} key={note.id} onScroll={onBodyScroll}>
             <h1 className="p-title">{shortTitle(note.title)}</h1>
             {sub && <div className="p-sub">{sub}</div>}
             <p className="p-lead">{note.summary}</p>
-            <div className="p-meta">
-              {note.status !== 'none' && <span className={'badge ' + note.status}>{note.status}</span>}
-              {note.fetched && <span className="muted">fetched {note.fetched}</span>}
-            </div>
+            {HEAD_FACETS.some(f => facetOf(note, f)) && <div className="p-facets">
+              {HEAD_FACETS.map(f => { const v = facetOf(note, f); return v && <button key={f} className={'facet f-' + f + ' v-' + v.replace(/[^\w-]/g, '')} onClick={() => onFacet(f, v)} title={`Show only notes with ${f}: ${v}`}><small>{f}</small>{v.replace(/-/g, ' ')}</button>; })}
+            </div>}
+            <div className="p-meta">{[
+              'Edited ' + ago(note.mtime),
+              note.kind !== 'drawing' && Math.max(1, Math.round(note.body.split(/\s+/).filter(Boolean).length / 220)) + ' min read',
+              `${note.backlinks.length} ${note.backlinks.length === 1 ? 'link' : 'links'} in, ${note.links.length} out`,
+              note.fetched && 'fetched ' + note.fetched,
+            ].filter(Boolean).join('  \u00b7  ')}</div>
             {note.kind === 'drawing' && note.scene && <section className="print-keep"><div className="label">Drawing</div><Drawing scene={note.scene} dark={dark} /></section>}
             {note.kind !== 'drawing' && toc.length >= 3 && <section className="toc">
               <button className="toc-head" onClick={() => setTocOpen(v => !v)} aria-expanded={tocOpen}><span className="label">Contents ({toc.length})</span><span className={'chev' + (tocOpen ? ' flip' : '')}>&#8964;</span></button>
@@ -157,11 +177,11 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             </section>}
             {note.kind !== 'drawing' && <section className="print-keep">
               <div className="label">Full note</div>
-              <div ref={mdRef} className={'md' + (expanded ? ' expanded' : '')} dangerouslySetInnerHTML={{ __html: html }}
+              <div ref={mdRef} className={'md' + (expanded || maxed ? ' expanded' : '')} dangerouslySetInnerHTML={{ __html: html }}
                 onClick={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) { hideCard(); onNav(a.dataset.id!); } }}
                 onMouseOver={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) showCard(a); }}
                 onMouseOut={e => { if ((e.target as HTMLElement).closest('a.wl[data-id]')) hideCard(); }} />
-              <button className="read-more" onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : 'Read more'} <span className={expanded ? 'flip' : ''}>&#8964;</span></button>
+              {!maxed && <button className="read-more" onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : 'Read more'} <span className={expanded ? 'flip' : ''}>&#8964;</span></button>}
             </section>}
             {note.kind === 'drawing' && note.body && <section className="print-keep"><div className="label">Text in this drawing</div><div className="md expanded"><p style={{ whiteSpace: 'pre-wrap' }}>{note.body}</p></div></section>}
             {outs.length > 0 && <section><div className="label">Links to ({outs.length})</div><div className="chips">{outs.map(c => <button key={c.id} className="chip" {...hov(c.id)} onClick={() => { hideCard(); onNav(c.id); }}>{shortTitle(c.title)}</button>)}</div></section>}

@@ -49,6 +49,14 @@ const justCreated = (() => {
     return id;
   } catch { return null; }
 })();
+// intro animation: once per tab, never after a live reload (the saved camera wins), not with reduce motion or ?zoom; ?intro=1|0 forces it
+const introOn = (() => {
+  const p = new URLSearchParams(location.search), f = p.get('intro');
+  if (f === '1' || f === '0') return f === '1';
+  let first = false;
+  try { first = !sessionStorage.getItem('kmIntro') && !sessionStorage.getItem('cam'); sessionStorage.setItem('kmIntro', '1'); } catch {}
+  return first && !p.has('zoom') && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+})();
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
@@ -91,6 +99,9 @@ export default function App() {
   const markAllSeen = useCallback(() => setSeenState({ base: Date.now(), seen: {} }), []);
   const [hl, setHl] = useState(() => { try { return localStorage.getItem('hlChanged') !== '0'; } catch { return true; } });
   useEffect(() => { try { localStorage.setItem('hlChanged', hl ? '1' : '0'); } catch {} }, [hl]);
+  const [introMsg, setIntroMsg] = useState(introOn);
+  useEffect(() => { if (introMsg) { const t = setTimeout(() => setIntroMsg(false), 6200); return () => clearTimeout(t); } }, [introMsg]);
+  const [browseKey, setBrowseKey] = useState(0);
   const [browse, setBrowse] = useState(() => { try { return localStorage.getItem('browse') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('browse', browse ? '1' : '0'); } catch {} }, [browse]);
   // Survive the live-reload that follows any vault file change (e.g. deleting a note).
@@ -221,7 +232,7 @@ export default function App() {
 
   return (
     <>
-      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} markIds={hl && changed.size ? changed : null} tints={tints} hide={hide} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
+      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} markIds={hl && changed.size ? changed : null} tints={tints} hide={hide} intro={introOn} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
       <div className="search-wrap">
         <div ref={headRef}>
         <div className="search-row">
@@ -298,11 +309,15 @@ export default function App() {
               </button>
             )) : <div className="empty">No notes match.{scope === 'names' && <button className="link" onClick={() => setScope('all')}>Search inside note text too</button>}</div>}
             {hits.length > 25 && <div className="res-more">Showing 25 of {hits.length}. All matches are on the map.</div>}
-            <div className="res-tips">Tips: <code>"exact phrase"</code> <code>-skip</code> <code>tag:agents</code> <code>vault:Jarvis</code> <code>path:wiki</code> <code>type:bug</code> <code>-status:stale</code></div>
+            <div className="res-tips">Tips: <code>"exact phrase"</code> <code>-skip</code> <code>tag:agents</code> <code>vault:work</code> <code>path:wiki</code> <code>type:bug</code> <code>-status:stale</code></div>
           </div>
         )}
       </div>
- {browse && <Browse top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
+ {introMsg && <div className="intro-status" style={{ marginLeft: -panelW / 2 }}>
+        {vault.notes.length} notes &middot; {vault.vaults.length} {vault.vaults.length === 1 ? 'vault' : 'vaults'}
+        {changed.size > 0 && <> &middot; <button onClick={() => { try { localStorage.setItem('browseTab', 'new'); } catch {} setBrowseKey(k => k + 1); setBrowse(true); setIntroMsg(false); }}>{changed.size} updated since you last looked</button></>}
+      </div>}
+ {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
         {info && (
@@ -364,7 +379,7 @@ export default function App() {
       {safeMode && <button className="safe-badge" onClick={() => setSafeMode(false)} title="Click to leave safe mode">Safe mode: {vault.hiddenCount} notes hidden</button>}
       {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} />}
       <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
-        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onClose={() => select(null)} />
+        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={(f, v) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); }} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
     </>
   );
 }

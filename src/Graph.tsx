@@ -6,10 +6,10 @@ import type { Note } from 'virtual:vault';
 import { shortTitle } from './util';
 import type { Colors } from './palettes';
 
-type GNode = { id: string; note: Note; tx?: number; ty?: number; tz?: number; R0: number; show: number; showT: number; x: number; y: number; z: number; fx?: number | null; fy?: number | null; fz?: number | null; r: number; t: number; R: number; hov: number; dim: number; lab: number; sx: number; sy: number; sr: number; wz: number; front: number; p: [number, number, number] };
-type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; tints?: Map<string, string> | null; hide: boolean; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
+type GNode = { id: string; note: Note; tx?: number; ty?: number; tz?: number; R0: number; show: number; showT: number; x: number; y: number; z: number; fx?: number | null; fy?: number | null; fz?: number | null; r: number; t: number; R: number; hov: number; dim: number; lab: number; sx: number; sy: number; sr: number; wz: number; front: number; p: [number, number, number]; ix: number; iy: number; iz: number; idl: number; ie: number };
+type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; tints?: Map<string, string> | null; hide: boolean; intro?: boolean; onIntroDone?: () => void; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
 
-const SPHERE = 330, DEFAULT_DIST = 1080, FOV = 46;
+const SPHERE = 330, DEFAULT_DIST = 1080, FOV = 46, INTRO = 1.9, FLY = 0.95;   // intro: total seconds, and each note's flight time
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
@@ -30,7 +30,7 @@ export default function Graph(props: Props) {
     const nodes: GNode[] = notes.map((n, i) => {
       const t = deg.get(n.id)! / maxDeg, k = (i + 0.5) / notes.length;
       const phi = Math.acos(1 - 2 * k), th = Math.PI * (1 + Math.sqrt(5)) * i, R = SPHERE * (1 - 0.3 * Math.pow(t, 0.8));
-      return { id: n.id, note: n, R0: R, show: 1, showT: 1, x: R * Math.sin(phi) * Math.cos(th), y: R * Math.cos(phi), z: R * Math.sin(phi) * Math.sin(th), r: 6 + Math.pow(t, 0.55) * 13, t, R, hov: 0, dim: 0, lab: 0, sx: 0, sy: 0, sr: 0, wz: 0, front: 0, p: [0, 0, 0] };
+      return { id: n.id, note: n, R0: R, show: 1, showT: 1, x: R * Math.sin(phi) * Math.cos(th), y: R * Math.cos(phi), z: R * Math.sin(phi) * Math.sin(th), r: 6 + Math.pow(t, 0.55) * 13, t, R, hov: 0, dim: 0, lab: 0, sx: 0, sy: 0, sr: 0, wz: 0, front: 0, p: [0, 0, 0], ix: 0, iy: 0, iz: 0, idl: 0, ie: 1 };
     });
     const byId = new Map(nodes.map(n => [n.id, n]));
     (window as unknown as { __km?: unknown }).__km = { nodes };
@@ -115,6 +115,24 @@ export default function Graph(props: Props) {
     const pend = { x: 0, y: 0 }, tgt = [0, 0, 0];
     let hover: string | null = null, drag = false, rotMode = false, moved = 0, last = [0, 0], idleSince = performance.now();
     let tween: gsap.core.Tween | null = null;
+    // intro (first open of a tab only): notes fly in from a wide scattered cloud, hubs first, then the links fade in
+    const intro = { on: !!live.current.intro, t: 0, k: 1, pending: undefined as string | null | undefined, tl: null as gsap.core.Timeline | null };
+    if (intro.on) {
+      restored = false;
+      [...nodes].sort((a, b) => b.t - a.t).forEach((n, i) => {
+        const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u), R = SPHERE * (1.9 + Math.random() * 1.2);
+        n.ix = s * Math.cos(a) * R; n.iy = u * R; n.iz = s * Math.sin(a) * R; n.ie = 0;
+        n.idl = (i / nodes.length) * (INTRO - FLY - 0.1) + Math.random() * 0.1;
+      });
+      cam.dist = cam.target = z0 * 1.65; cam.px = cam.tx = cam.py = cam.ty = 0; rot.x = 0.28; rot.y = -0.9;
+      intro.tl = gsap.timeline().to(cam, { target: z0, duration: INTRO + 0.4, ease: 'power2.out' }, 0).to(rot, { y: 0, duration: INTRO + 0.6, ease: 'power3.out' }, 0);
+    }
+    const skipIntro = () => { if (intro.on) { intro.k = 6; intro.tl?.timeScale(6); } };
+    const endIntro = () => {
+      intro.on = false; nodes.forEach(n => { n.ie = 1; }); idleSince = performance.now();
+      live.current.onIntroDone?.();
+      if (intro.pending) api.current?.focus(intro.pending);
+    };
 
     const resize = () => {
       const r = host.getBoundingClientRect(); W = Math.max(1, r.width); H = Math.max(1, r.height);
@@ -153,10 +171,11 @@ export default function Graph(props: Props) {
         unpin();
         settle.t = 1.8;
         sim.alpha(0.7).restart();
-        if (!selectedId) { tween?.kill(); tween = gsap.to(cam, { target: defaultDist(), tx: 0, ty: 0, duration: 1.1, ease: 'power2.inOut' }); }
+        if (!selectedId && !intro.on) { tween?.kill(); tween = gsap.to(cam, { target: defaultDist(), tx: 0, ty: 0, duration: 1.1, ease: 'power2.inOut' }); }
       },
       panel: w => { const big = Math.abs(w - lastPanel) > 160; lastPanel = w; gsap.killTweensOf(cam, 'off'); gsap.to(cam, { off: w / 2, duration: big ? 0.9 : 0.18, ease: big ? 'power3.out' : 'none' }); },
       focus: id => {
+        if (intro.on) { intro.pending = id; return; }   // land on the note once the intro has settled
         tween?.kill();
         if (!id) { if (restored) { restored = false; return; } tween = gsap.to(cam, { target: defaultDist(), tx: 0, ty: 0, duration: 1.2, ease: 'power2.inOut' }); idleSince = performance.now(); return; }
         restored = false;
@@ -185,6 +204,7 @@ export default function Graph(props: Props) {
       tgt[0] = x1 * cy - z1 * sy; tgt[1] = y; tgt[2] = x1 * sy + z1 * cy;
     };
     const down = (e: PointerEvent) => {
+      skipIntro();
       // plain drag rotates the ball; shift/right-drag pans
       rotMode = !(e.shiftKey || e.button === 2); drag = true; moved = 0; last = pos(e); cv.setPointerCapture(e.pointerId); tween?.kill(); vel.x = vel.y = 0; pend.x = pend.y = 0;
       dragRef.node = pick(last[0], last[1]); if (dragRef.node) sim.alphaTarget(0.2).restart();
@@ -224,7 +244,7 @@ export default function Graph(props: Props) {
       idleSince = performance.now();
     };
     const wheel = (e: WheelEvent) => {
-      e.preventDefault(); tween?.kill(); gsap.killTweensOf(cam, 'tx,ty,target');
+      e.preventDefault(); skipIntro(); tween?.kill(); gsap.killTweensOf(cam, 'tx,ty,target');
       // zoom toward whatever is under the cursor: keep that point fixed on screen by sliding the camera sideways as it dollies
       const [mx, my] = pos(e);
       let zp = 0, best = 48;                                   // depth of the nearest visible note (within 48px), else the middle plane
@@ -237,6 +257,7 @@ export default function Graph(props: Props) {
     };
     const leave = () => { hover = null; };
     cv.style.cursor = 'grab';
+    addEventListener('keydown', skipIntro);
     cv.addEventListener('contextmenu', ev => ev.preventDefault()); cv.addEventListener('pointerdown', down); cv.addEventListener('pointermove', move); cv.addEventListener('pointerup', up);
     cv.addEventListener('pointercancel', up); cv.addEventListener('pointerleave', leave); cv.addEventListener('wheel', wheel, { passive: false });
 
@@ -248,6 +269,8 @@ export default function Graph(props: Props) {
       const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
       const { selectedId, colors: c, matchIds, markIds, tints } = live.current;
       const ease = 1 - Math.exp(-dt * 10), fast = 1 - Math.exp(-dt * 14);
+      if (intro.on) { intro.t += dt * intro.k; for (const n of nodes) { const x = clamp((intro.t - n.idl) / FLY, 0, 1); n.ie = 1 - Math.pow(1 - x, 3); } if (intro.t >= INTRO) endIntro(); }
+      const linkK = intro.on ? smooth(clamp((intro.t - INTRO * 0.6) / (INTRO * 0.4), 0, 1)) : 1;   // links and labels arrive last
 
       // rotation: inertia after a drag, then a slow idle spin
       if (drag && !dragRef.node) {
@@ -283,7 +306,8 @@ export default function Graph(props: Props) {
       const showK = 1 - Math.exp(-dt * 7);
       for (const n of nodes) {
         n.R = n.R0 * shell.cur; n.show += (n.showT - n.show) * showK;
-        const x1 = n.x * cy + n.z * sy, z1 = -n.x * sy + n.z * cy, y2 = n.y * cx - z1 * sx, z2 = n.y * sx + z1 * cx;
+        const X = n.ix + (n.x - n.ix) * n.ie, Y = n.iy + (n.y - n.iy) * n.ie, Z = n.iz + (n.z - n.iz) * n.ie;
+        const x1 = X * cy + Z * sy, z1 = -X * sy + Z * cy, y2 = Y * cx - z1 * sx, z2 = Y * sx + z1 * cx;
         n.p = [x1, y2, z2]; n.wz = z2; n.front = clamp((z2 + SPHERE) / (2 * SPHERE), 0, 1);
         v3.set(x1, y2, z2).project(camera);
         n.sx = (v3.x * 0.5 + 0.5) * W; n.sy = (-v3.y * 0.5 + 0.5) * H;
@@ -296,12 +320,12 @@ export default function Graph(props: Props) {
       // discs, painted back to front; far ones grow and fade like out-of-focus bokeh
       [...nodes].sort((a, b) => a.wz - b.wz).forEach((n, i) => {
         const marked = !!markIds && markIds.has(n.id);
-        const s = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * (1 + n.hov * 0.12 + (marked ? 0.18 : 0)) * smooth(n.show);
+        const s = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * (1 + n.hov * 0.12 + (marked ? 0.18 : 0)) * smooth(n.show) * smooth(Math.min(1, n.ie * 1.6));
         m4.compose(v3.set(n.p[0], n.p[1], n.p[2]), qI, sc.set(s, s, 1)); discs.setMatrixAt(i, m4);
         const f = smooth(n.front);
         const tint = tints?.get(n.id);   // color by type: the tint takes the place of the near tone, so depth still fades it
         tmp.copy(farTone).lerp(tint ? tintC.set(tint) : nearTone, tint ? 0.55 + 0.45 * f : f * (0.35 + 0.65 * Math.pow(n.t, 0.6))).lerp(bg, clamp(n.dim * 0.5 + (1 - f) * 0.35, 0, 1));
-        tmp.lerp(accent, Math.max(n.hov * 0.7, marked ? 0.85 : 0)).lerp(bg, 1 - n.show); discs.setColorAt(i, tmp);
+        tmp.lerp(accent, Math.max(n.hov * 0.7, marked ? 0.85 : 0)).lerp(bg, 1 - n.show * Math.min(1, n.ie * 2)); discs.setColorAt(i, tmp);
       });
       discs.instanceMatrix.needsUpdate = true; discs.instanceColor!.needsUpdate = true;
 
@@ -313,7 +337,7 @@ export default function Graph(props: Props) {
         const mx = (A[0] + B[0]) / 2 - (dy / flat) * bow, my = (A[1] + B[1]) / 2 + (dx / flat) * bow, mz = (A[2] + B[2]) / 2;
         const curve = (t: number) => { const u = 1 - t; tmpP[0] = u * u * A[0] + 2 * u * t * mx + t * t * B[0]; tmpP[1] = u * u * A[1] + 2 * u * t * my + t * t * B[1]; tmpP[2] = u * u * A[2] + 2 * u * t * mz + t * t * B[2]; };
         const fade = 1 - Math.max(ls.dim, lt.dim) * 0.9, avg = (ls.front + lt.front) / 2;
-        const vs = smooth(Math.min(ls.show, lt.show));
+        const vs = smooth(Math.min(ls.show, lt.show)) * linkK;
         const lineAmt = (hot ? 0.8 * Math.max(zoomK, 0.6) : (0.04 + 0.2 * avg * avg) * (focus ? 0.06 : 1) * zoomK * zoomK * fade) * vs;
         for (let k = 0; k < SEG; k++) for (let e = 0; e < 2; e++) {
           curve((k + e) / SEG); const vi = (i * SEG + k) * 6 + e * 3;
@@ -356,7 +380,7 @@ export default function Graph(props: Props) {
         if (ok) boxes.push([bx, by, w, h]);
         n.lab += ((ok ? 1 : 0) - n.lab) * fast;
         if (n.lab < 0.02) { el.style.opacity = '0'; continue; }
-        el.style.opacity = String((0.12 + 0.88 * Math.pow(n.front, 1.4)) * (1 - n.dim * 0.7) * n.lab * n.show);
+        el.style.opacity = String((0.12 + 0.88 * Math.pow(n.front, 1.4)) * (1 - n.dim * 0.7) * n.lab * n.show * linkK);
         el.style.color = c.ink; el.style.fontSize = Math.max(size, 7).toFixed(1) + 'px';
         el.style.transform = `translate(${n.sx.toFixed(1)}px, ${(n.sy - n.sr - 3).toFixed(1)}px) translate(-50%, -100%)`;
         el.style.fontWeight = n.hov > 0.5 ? '600' : '400';
@@ -365,7 +389,7 @@ export default function Graph(props: Props) {
     raf = requestAnimationFrame(frame);
 
     return () => {
-      cancelAnimationFrame(raf); sim.stop(); ro.disconnect(); tween?.kill(); gsap.killTweensOf(cam); gsap.killTweensOf(rot);
+      cancelAnimationFrame(raf); sim.stop(); removeEventListener('keydown', skipIntro); intro.tl?.kill(); ro.disconnect(); tween?.kill(); gsap.killTweensOf(cam); gsap.killTweensOf(rot);
       cv.removeEventListener('pointerdown', down); cv.removeEventListener('pointermove', move); cv.removeEventListener('pointerup', up);
       cv.removeEventListener('pointercancel', up); cv.removeEventListener('pointerleave', leave); cv.removeEventListener('wheel', wheel);
       renderer.dispose(); dotTex.dispose(); cv.remove(); layer.remove();
