@@ -22,7 +22,14 @@ function filtered(): typeof raw & { hiddenCount: number } {
   const keep = raw.notes.filter(n => SAFE_OK.has(n.sensitivity));
   const ids = new Set(keep.map(n => n.id));
   const hiddenNames = new Set(raw.notes.filter(n => !ids.has(n.id)).map(n => base(n.path)));
-  const notes: Note[] = keep.map(n => ({ ...n, links: n.links.filter(i => ids.has(i)), backlinks: n.backlinks.filter(i => ids.has(i)) }));
+  // a [[link]] to a hidden note would still print its name (often customer-first) in visible text: replace it with a neutral label.
+  // Display only: the editor and saves work on the exact file text from /api/raw, never on this copy.
+  const mask = (t: string) => t.replace(/!?\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g, (m, target: string) => (hiddenNames.has(base(target.trim())) ? '(hidden note)' : m));
+  const notes: Note[] = keep.map(n => ({
+    ...n, body: mask(n.body), summary: mask(n.summary), source: mask(n.source),
+    meta: Object.fromEntries(Object.entries(n.meta).map(([k, v]) => [k, mask(v)])),
+    links: n.links.filter(i => ids.has(i)), backlinks: n.backlinks.filter(i => ids.has(i)),
+  }));
   return {
     ...raw, notes, hiddenCount: raw.notes.length - keep.length,
     sections: raw.sections.filter(s => notes.some(n => n.section === s)),

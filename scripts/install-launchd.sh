@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # macOS only: run Knowledge Map at login and restart it if it crashes (launchd user agent).
-# Usage: scripts/install-launchd.sh [--label com.me.knowledge-map] [--print | --uninstall]
+# Usage: scripts/install-launchd.sh [--label com.me.knowledge-map] [--port 7777] [--print | --uninstall]
 #   (no flag)   write the plist to ~/Library/LaunchAgents and start the service
 #   --print     only print the plist that would be written
 #   --uninstall stop the service and remove the plist
 set -euo pipefail
 
-LABEL="com.knowledge-map"; MODE="install"
+LABEL="com.knowledge-map"; MODE="install"; PORT="${KM_PORT:-7777}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --label) LABEL="$2"; shift 2;;
+    --port) PORT="$2"; shift 2;;
     --print) MODE="print"; shift;;
     --uninstall) MODE="uninstall"; shift;;
     *) echo "unknown argument: $1" >&2; exit 2;;
@@ -41,11 +42,11 @@ render() { cat <<PLIST
   <array>
     <string>$NODE</string>
     <string>$PROJECT/node_modules/vite/bin/vite.js</string>
-    <string>--port</string><string>7777</string>
+    <string>--port</string><string>$PORT</string>
   </array>
   <key>WorkingDirectory</key><string>$PROJECT</string>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>$(dirname "$NODE"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <dict><key>PATH</key><string>$(dirname "$NODE"):/usr/bin:/bin:/usr/sbin:/sbin</string><key>KM_PORT</key><string>$PORT</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
@@ -62,6 +63,6 @@ mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 render > "$PLIST"
 launchctl bootstrap "$DOMAIN" "$PLIST"
-echo "started $LABEL -> http://knowledge.localhost:7777  (log: $LOG)"
+echo "started $LABEL -> http://knowledge.localhost:$PORT  (log: $LOG)"
 echo "restart after editing config.json or vault-plugin.ts:  launchctl kickstart -k $DOMAIN/$LABEL"
 echo "if a vault shows 0 notes, give $NODE Full Disk Access (System Settings > Privacy & Security)"

@@ -5,3 +5,4 @@ dist
 config.json
 PLAN.md
 TODO.md
+.claude/settings.local.json

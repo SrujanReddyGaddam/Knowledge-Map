@@ -15,8 +15,20 @@ Needs Node `^20.19.0 || >=22.12.0`.
 
 `config.json` accepts several vaults and a per-vault `exclude` list (put secrets there). It is git-ignored. Restart the server after changing it.
 
-## Let a coding agent set it up
-Point your coding agent (Claude Code, Codex, Cursor, ...) at this repo and say, for example: "Set up Knowledge Map for my vault at ~/Documents/MyVault and keep it running at login." The agent reads [AGENTS.md](AGENTS.md), asks you for vault paths, files to exclude and how you want to run it, then configures and verifies it.
+## Easiest: let a coding agent set it up (recommended)
+    git clone https://github.com/SrujanReddyGaddam/Knowledge-Map.git
+    cd Knowledge-Map
+    claude                                   # or Codex, Cursor, ... in this folder
+
+Then say **"Set this up for me."** The agent follows [the setup skill](.claude/skills/setup-knowledge-map/SKILL.md): it checks Node, finds the Obsidian vaults already on your machine, asks a few short questions (which vaults, a new work vault or not, which customers, editable or read-only, run at login or on demand), scans your notes for secrets and keeps them out, writes `config.json`, installs, starts the app and checks it really shows your notes. Nothing from anyone else's setup is reused, and nothing leaves your machine.
+
+### Your own organized work vault
+The setup can create a new vault from [`starter-vault/`](starter-vault): folders by lifecycle (`inbox/ sources/ journal/ projects/<customer>/<project>/ knowledge/ research/ people/ archive/`), a closed list of 16 note types with templates, required `type` / `summary` / `sensitivity` frontmatter, generated hub lists, and a few fictional `acme` examples. By hand: `npm run new-vault -- ~/Documents/Work --owner "Your Name" --customers acme,globex --config --writable`.
+
+### Already have notes? Organize and sanitize them
+`npm run new-vault -- <your vault> --adopt --config` adds only the rules, templates and agent skills (existing files are never touched). Then start your agent in the vault folder and say **"Organize my vault."** The `organize-vault` skill snapshots the vault and puts it in local git, inventories every note, finds secrets (moved out of the vault and excluded) and customer details, and proposes a manifest: where each note goes, its type and sensitivity, which notes to split into a generic `knowledge/` part and a customer part, and what to redact from generic notes. Nothing changes until you approve; it then applies the plan (moves go through the app so links are rewritten), audits for leaks, and asks once more before finishing.
+
+Day to day, the vault skills keep it tidy: "triage my inbox", "lint the vault", "harvest <project>".
 
 ## Always-on (macOS)
     scripts/install-launchd.sh              # start at login, restart on crash

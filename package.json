@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --open",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --open"
+    "preview": "vite preview --open",
+    "new-vault": "node scripts/new-vault.mjs",
+    "indexes": "node scripts/build-indexes.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

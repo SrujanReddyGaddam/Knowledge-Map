@@ -8,7 +8,9 @@ A local web app that shows one or more Obsidian vaults (folders of markdown note
 Stack: Vite + React + TypeScript, three.js with d3-force-3d (graph), gsap, marked (markdown), @excalidraw/excalidraw (drawings, lazy loaded), WebAudio (click sounds).
 
 ## Setting it up for a user (do this when asked to "set it up")
-Prerequisites: Node `^20.19.0 || >=22.12.0` and npm. Check with `node -v`.
+**Follow `.claude/skills/setup-knowledge-map/SKILL.md`** (Claude Code loads it as the `setup-knowledge-map` skill; other agents: read the file). It interviews the user, finds their vaults, scans for secrets, creates or adopts a vault from `starter-vault/` with `scripts/new-vault.mjs`, writes `config.json`, installs, verifies, and offers to organize and sanitize existing notes. The rest of this section is the reference it relies on.
+
+Prerequisites: Node `^20.19.0 || >=22.12.0` and npm (the vault scripts need 22.18+ for TypeScript type stripping). Check with `node -v`.
 
 Ask the user these questions (use sensible defaults if they say "you decide", and tell them which calls you made):
 1. **Vault path(s):** absolute path to each Obsidian vault folder (the folder that contains `.obsidian/`). One or several.
@@ -29,6 +31,9 @@ Always-on on macOS: `scripts/install-launchd.sh` (add `--label com.<name>.knowle
 `launchctl kickstart -k gui/$(id -u)/<label>`. Logs: `~/Library/Logs/knowledge-map.log`.
 
 Verify before telling the user it works: server returns 200, the startup log line `[vault] <names>: N notes, M links, K unresolved` shows the expected counts (0 notes means a wrong path or a macOS permission problem), and open the page (screenshot if you can drive a browser).
+
+## Starter vault and vault skills
+`starter-vault/` is the template for a new, organized work vault: rules (`README.md`, with `{{PLACEHOLDERS}}` filled in by the script), the 16 note templates, an `index.md` hub, fictional `acme` example notes, and agent skills in `starter-vault/.claude/skills/` (`organize-vault` for the one-time cleanup and sanitizing of existing notes, `triage-inbox`, `lint-vault`, `harvest-project`). `node scripts/new-vault.mjs <path> [--adopt] [--config] ...` copies it (see the header of the script for flags); `--adopt` adds only the scaffold to an existing vault and never overwrites a file. Keep everything in `starter-vault/` free of real names, customers and paths: it ships to everyone.
 
 ## config.json
 ```json
@@ -76,7 +81,7 @@ Data contract (`src/vault.d.ts`): a note has `id, vault, path, abs, section, tit
 - macOS: background processes may be blocked from `~/Documents`, `~/Desktop` or iCloud folders. Symptom: vault shows 0 notes or `vault not readable` in the log. Fix: grant the `node` binary Full Disk Access, then restart. iCloud notes not yet downloaded appear as `.icloud` stubs and are skipped.
 - Supported content: markdown with frontmatter (`title`, `tags`, `summary`, `type`, `status`, `related`, `source`), wikilinks, `![[image]]`, `[x](./y.md)` links, callouts, Excalidraw (`*.excalidraw.md` and `*.excalidraw`). Not supported: `.canvas`, `.base`, PDF embeds, executing Dataview (the block is shown with a "not run" label).
 - Hash links (`#note-id`) are read once at load; changing only the hash in a running page does not open the note.
-- **Safe mode** (shield button, `?safe=1|0`, localStorage `safeMode`): fails closed, a note without `sensitivity` is hidden. Toggling reloads the page so module-level indexes are rebuilt from the filtered data.
+- **Safe mode** (shield button, `?safe=1|0`, localStorage `safeMode`): fails closed, a note without `sensitivity` is hidden. In visible notes, `[[links]]` to hidden notes (body, summary, source, frontmatter values) are shown as "(hidden note)", so a customer-first file name never appears on screen; display only, the editor still works on the exact file text. Toggling reloads the page so module-level indexes are rebuilt from the filtered data.
 - Note titles fall back to the first `# heading` outside code blocks.
 - `window.__km` is a debug hook exposing graph nodes for browser tests.
 
