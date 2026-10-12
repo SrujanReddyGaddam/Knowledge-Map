@@ -30,3 +30,6 @@ export const planRename = (id: string, to: string) => call('/api/rename', { id, 
 export const renameNote = (id: string, to: string, planHash: string, ack: boolean) => call('/api/rename', { id, to, planHash, ack });
 export const listTemplates = (vault: string) => call('/api/templates?vault=' + encodeURIComponent(vault));
 export const createNote = (vault: string, path: string, text: string) => call('/api/create', { vault, path, text });
+export const appendLine = (vault: string, path: string, heading: string, line: string, init?: string) => call('/api/append', { vault, path, heading, line, init });
+export const attachImage = (id: string, ext: string, data: string) => call('/api/attach', { id, ext, data });
+export const listProjects = () => call('/api/projects');

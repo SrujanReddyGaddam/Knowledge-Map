@@ -7,5 +7,7 @@
       "rootSection": "General",
       "writable": false
     }
-  ]
+  ],
+  "projects": { "roots": ["~/Developer"], "exclude": [], "customers": {} },
+  "jiraBase": ""
 }

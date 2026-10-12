@@ -14,6 +14,12 @@ import { PALETTES, applyColors } from './palettes';
 import { buildIndex, runSearch, highlight, type Scope } from './search';
 import { FACETS, facetCounts, facetMatch, typeTints, lintNote, TYPE_GROUPS, type Facet, type FacetSel } from './facets';
 import NewNote from './NewNote';
+import Today from './Today';
+import Cockpit from './Cockpit';
+import Capture from './Capture';
+import Palette, { type Action } from './Palette';
+import { customersOf } from './cockpitData';
+import { dailyNote, dailyPath, dailyVault, ensureDaily } from './journal';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
 // same rules as the server: exact file name first ([[x.excalidraw]] is the drawing), then the name without .excalidraw, where a note beats a drawing
@@ -59,6 +65,11 @@ const introOn = (() => {
   try { first = !sessionStorage.getItem('kmIntro') && !sessionStorage.getItem('cam'); sessionStorage.setItem('kmIntro', '1'); } catch {}
   return first && !p.has('zoom') && !matchMedia('(prefers-reduced-motion: reduce)').matches;
 })();
+const customers = customersOf(vault.notes);
+const findNotes = (q: string) => (runSearch(searchIndex, q, 'names')?.hits ?? []).map(h => h.note);
+// a message that should survive the reload that follows our own write (e.g. "Captured")
+const toastAfterReload = (() => { try { const t = sessionStorage.getItem('kmToast'); sessionStorage.removeItem('kmToast'); return t || ''; } catch { return ''; } })();
+type View = 'tasks' | 'today' | 'cockpit' | null;
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
@@ -108,9 +119,29 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('browse', browse ? '1' : '0'); } catch {} }, [browse]);
   // Tasks: every open "- [ ]" checkbox across the vaults, in its own full-page view over the map (the note panel opens on top of it)
   const allTasks = useMemo(() => collectTasks(vault.notes), []);
-  const [tasksOpen, setTasksOpen] = useState(() => { try { return localStorage.getItem('tasks') === '1'; } catch { return false; } });
-  useEffect(() => { try { localStorage.setItem('tasks', tasksOpen ? '1' : '0'); } catch {} }, [tasksOpen]);
-  const tasksRef = useRef(tasksOpen); tasksRef.current = tasksOpen;
+  // full-page views over the map (one at a time): Tasks, Today, customer cockpit. ?view=today|tasks|cockpit&customer=x opens one.
+  const [view, setView] = useState<View>(() => {
+    const p = new URLSearchParams(location.search).get('view');
+    if (p === 'tasks' || p === 'today' || p === 'cockpit') return p;
+    try { const v = localStorage.getItem('view'); return v === 'tasks' || v === 'today' || v === 'cockpit' ? v : localStorage.getItem('tasks') === '1' ? 'tasks' : null; } catch { return null; }
+  });
+  useEffect(() => { try { localStorage.setItem('view', view || ''); localStorage.removeItem('tasks'); } catch {} }, [view]);
+  const toggleView = useCallback((v: Exclude<View, null>) => setView(cur => (cur === v ? null : v)), []);
+  const tasksOpen = view === 'tasks';
+  const tasksRef = useRef(view); tasksRef.current = view;
+  const [customer, setCustomer] = useState<string | null>(() => {
+    const p = new URLSearchParams(location.search).get('customer');
+    let c = p; if (!c) { try { c = localStorage.getItem('cockpitCustomer'); } catch {} }
+    return c && customers.includes(c) ? c : null;
+  });
+  useEffect(() => { try { localStorage.setItem('cockpitCustomer', customer || ''); } catch {} }, [customer]);
+  // one-shot URL params (app shortcuts) are dropped after use so a reload does not repeat them
+  useEffect(() => { const u = new URL(location.href); if (['capture', 'view', 'customer'].some(k => u.searchParams.has(k))) { ['capture', 'view', 'customer'].forEach(k => u.searchParams.delete(k)); history.replaceState(null, '', u.toString()); } }, []);
+  const openCockpit = useCallback((c: string | null) => { setCustomer(c && customers.includes(c) ? c : null); setView('cockpit'); }, []);
+  const [captureOpen, setCaptureOpen] = useState(() => new URLSearchParams(location.search).get('capture') === '1');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [toast, setToast] = useState(toastAfterReload);
+  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 3200); return () => clearTimeout(t); } }, [toast]);
   // Survive the live-reload that follows any vault file change (e.g. deleting a note).
   useEffect(() => { try { sessionStorage.setItem('filters', JSON.stringify({ q: query, section, tags, vaults: vaultSel, facets, focus })); } catch {} }, [query, section, tags, vaultSel, facets, focus]);
   const [hide, setHide] = useState(() => { try { const m = new URLSearchParams(location.search).get('mode') || localStorage.getItem('filterMode'); return m !== 'dim'; } catch { return true; } });
@@ -205,22 +236,61 @@ export default function App() {
   const [maxed, setMaxed] = useState(false); maxedRef.current = maxed;
   useEffect(() => { if (!note) setMaxed(false); }, [note]);
 
+  // today's journal: open it, or create it from the daily template and open it in the editor after the reload
+  const openDaily = () => {
+    const n = dailyNote();
+    if (n) { select(n.id); return; }
+    if (safeMode) { setToast("Today's journal does not exist yet (Safe mode does not create notes)."); return; }
+    try { sessionStorage.setItem('kmOpen', JSON.stringify({ vault: dailyVault(), path: dailyPath() + '.md' })); } catch {}
+    ensureDaily().then(r => { if (!r.created) { try { sessionStorage.removeItem('kmOpen'); } catch {} setToast("Today's journal exists but is not loaded yet, try again in a moment."); } })
+      .catch(e => { try { sessionStorage.removeItem('kmOpen'); } catch {} setToast('Could not create the journal: ' + (e as Error).message); });
+  };
+  const actions: Action[] = [
+    { id: 'today', label: 'Today', hint: 'due tasks, where you left off, captures', keys: 'h', run: () => setView('today') },
+    { id: 'tasks', label: 'Tasks', hint: 'every open checkbox', keys: 't', run: () => setView('tasks') },
+    { id: 'cockpit', label: 'Customer cockpit', hint: 'pick a customer', keys: 'k', run: () => openCockpit(null) },
+    ...customers.map(c => ({ id: 'ck-' + c, label: 'Cockpit: ' + c.replace(/-/g, ' '), hint: 'customer', run: () => openCockpit(c) })),
+    ...(dailyVault() && !safeMode ? [{ id: 'capture', label: 'Quick capture', hint: 'into the inbox', keys: 'c', run: () => setCaptureOpen(true) }] : []),
+    ...(dailyVault() ? [{ id: 'daily', label: "Today's journal", hint: 'open or create the daily note', keys: 'd', run: openDaily }] : []),
+    ...(vault.writableVaults.length ? [{ id: 'new', label: 'New note', hint: 'from a template', keys: 'n', run: () => setNewOpen(true) }] : []),
+    { id: 'browse', label: 'Browse', hint: 'new, recent, tree, health', keys: 'b', run: () => setBrowse(v => !v) },
+    { id: 'search', label: 'Search notes', keys: '/', run: () => document.getElementById('search')?.focus() },
+    ...(selNote ? [
+      ...(selNote.writable && selNote.kind !== 'drawing' ? [{ id: 'edit', label: 'Edit this note', hint: shortTitle(selNote.title), keys: 'e', run: () => setEditId(selNote.id) }] : []),
+      { id: 'focus', label: 'Focus on this note', hint: 'show its neighbours only', run: () => setFocus({ id: selNote.id, hops: hopsRef.current }) },
+      { id: 'close', label: 'Close the note', keys: 'esc', run: () => select(null) },
+    ] : []),
+    { id: 'focusmode', label: focusMode ? 'Leave focus mode' : 'Focus mode', hint: 'every pick becomes the focus', run: () => { if (focusMode) { setFocusMode(false); setFocus(null); } else setFocusMode(true); } },
+    { id: 'clear', label: 'Clear filters', run: clearFilters },
+    { id: 'safe', label: safeMode ? 'Leave Safe mode' : 'Safe mode', hint: 'for screen sharing', run: () => setSafeMode(!safeMode) },
+    { id: 'theme', label: dark ? 'Light theme' : 'Dark theme', run: () => setDark(d => !d) },
+    { id: 'color', label: colorBy === 'type' ? 'Stop coloring by type' : 'Color notes by type', run: () => setColorBy(c => (c === 'type' ? 'none' : 'type')) },
+    ...Object.entries(PALETTES).map(([k, p]) => ({ id: 'pal-' + k, label: 'Palette: ' + p.name, run: () => setPalette(k) })),
+    { id: 'seen', label: 'Mark all notes seen', run: markAllSeen },
+  ];
+
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || !!(document.activeElement as HTMLElement | null)?.isContentEditable;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); const el = document.getElementById('search') as HTMLInputElement | null; el?.focus(); el?.select(); return; }
-      if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else if (tasksRef.current) { if (selNote) select(null); else setTasksOpen(false); } else if (focusModeRef.current) { setFocusMode(false); setFocus(null); } else select(null); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && !editIdRef.current) { e.preventDefault(); setPaletteOpen(v => !v); return; }
+      if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else if (tasksRef.current) { if (selNote) select(null); else setView(null); } else if (focusModeRef.current) { setFocusMode(false); setFocus(null); } else select(null); }
       else if (typing) return;
       else if (e.key === '/') { e.preventDefault(); document.getElementById('search')?.focus(); }
       else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) setBrowse(v => !v);
-      else if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) setTasksOpen(v => !v);
+      else if (e.metaKey || e.ctrlKey || e.altKey) return;
+      else if (e.key === 't') toggleView('tasks');
+      else if (e.key === 'h') toggleView('today');
+      else if (e.key === 'k') { if (tasksRef.current === 'cockpit') setView(null); else openCockpit(selNote?.customer || customer); }
+      else if (e.key === 'c' && dailyVault() && !editIdRef.current && !safeMode) { e.preventDefault(); setCaptureOpen(true); }
+      else if (e.key === 'd' && dailyVault() && !editIdRef.current) { e.preventDefault(); openDaily(); }
       else if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && vault.writableVaults.length && !editIdRef.current) { e.preventDefault(); setNewOpen(true); }
       else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && selNote?.writable && selNote.kind !== 'drawing') { e.preventDefault(); setEditId(selNote.id); }
       else if (e.key === 'ArrowRight' && next) select(next.id);
       else if (e.key === 'ArrowLeft' && prev) select(prev.id);
     };
     addEventListener('keydown', k); return () => removeEventListener('keydown', k);
-  }, [next, prev, select, selNote]);
+  }, [next, prev, select, selNote, toggleView, openCockpit, customer]);   // eslint-disable-line react-hooks/exhaustive-deps
   // warn before closing the tab with unsaved edits; our own saves refresh the data once editing ends, external changes reload as before
   useEffect(() => {
     const bu = (e: BeforeUnloadEvent) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ''; } };
@@ -255,7 +325,13 @@ export default function App() {
             {changed.size > 0 && <span className="count-badge">{changed.size > 99 ? '99+' : changed.size}</span>}
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7" /></svg>
           </button>
-          <button className={'icon-btn' + (tasksOpen ? ' on' : '')} onClick={() => setTasksOpen(v => !v)} aria-label="Tasks" title={`Tasks: ${allTasks.length} open checkboxes from all notes  (t)`}>
+          <button className={'icon-btn' + (view === 'today' ? ' on' : '')} onClick={() => toggleView('today')} aria-label="Today" title="Today: due tasks, where you left off, captures  (h)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="8" cy="8" r="3" /><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" /></svg>
+          </button>
+          {customers.length > 0 && <button className={'icon-btn' + (view === 'cockpit' ? ' on' : '')} onClick={() => (view === 'cockpit' ? setView(null) : openCockpit(selNote?.customer || customer))} aria-label="Customer cockpit" title="Customer cockpit  (k)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="M2.5 14V4.5l5-2.5v12M7.5 14V6.5l6 2.5v5M1.5 14h13M4.5 6.5v.01M4.5 9v.01M4.5 11.5v.01M10 10.5v.01M10 12.5v.01" strokeLinecap="round" /></svg>
+          </button>}
+          <button className={'icon-btn' + (tasksOpen ? ' on' : '')} onClick={() => toggleView('tasks')} aria-label="Tasks" title={`Tasks: ${allTasks.length} open checkboxes from all notes  (t)`}>
             {allTasks.length > 0 && <span className="count-badge">{allTasks.length > 99 ? '99+' : allTasks.length}</span>}
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" /><path d="M5.5 8.2l1.8 1.8 3.4-3.8" /></svg>
           </button>
@@ -329,7 +405,9 @@ export default function App() {
         {vault.notes.length} notes &middot; {vault.vaults.length} {vault.vaults.length === 1 ? 'vault' : 'vaults'}
         {changed.size > 0 && <> &middot; <button onClick={() => { try { localStorage.setItem('browseTab', 'new'); } catch {} setBrowseKey(k => k + 1); setBrowse(true); setIntroMsg(false); }}>{changed.size} updated since you last looked</button></>}
       </div>}
- {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} onSelect={select} onClose={() => setTasksOpen(false)} canTick={!safeMode} />}
+ {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
+ {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} />}
+ {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} onCustomer={setCustomer} onSelect={select} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
@@ -338,7 +416,7 @@ export default function App() {
             <div className="eyebrow">Knowledge map</div>
             <p><b>{vault.vaults.join(' + ')}</b><br />{vault.notes.length} notes, {vault.edges.length} links{vault.broken.length ? `, ${vault.broken.length} broken wikilinks` : ''}{safeMode ? `. Safe mode: ${vault.hiddenCount} notes hidden` : ''}</p>
             <div className="eyebrow">Controls</div>
-            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>t</kbd> tasks &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
+            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>&#8984;K</kbd> commands &nbsp; <kbd>/</kbd> search &nbsp; <kbd>h</kbd> today &nbsp; <kbd>k</kbd> cockpit &nbsp; <kbd>t</kbd> tasks &nbsp; <kbd>c</kbd> capture &nbsp; <kbd>d</kbd> journal &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
           </div>
         )}
       </div>
@@ -391,8 +469,12 @@ export default function App() {
       </div>}
       {safeMode && <button className="safe-badge" onClick={() => setSafeMode(false)} title="Click to leave safe mode">Safe mode: {vault.hiddenCount} notes hidden</button>}
       {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} />}
+      {captureOpen && !safeMode && dailyVault() && <Capture vaults={vault.writableVaults} onClose={() => setCaptureOpen(false)}
+        onDone={(v, p) => { const m = `Captured to ${v}: ${p}`; try { sessionStorage.setItem('kmToast', m); } catch {} setCaptureOpen(false); setToast(m); }} />}
+      {paletteOpen && <Palette actions={actions} findNotes={findNotes} onOpen={id => select(id)} onClose={() => setPaletteOpen(false)} />}
+      {toast && <div className="toast" role="status">{toast}</div>}
       <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
-        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={(f, v) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); }} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
+        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={(f, v) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); }} onCockpit={c => openCockpit(c)} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
     </>
   );
 }

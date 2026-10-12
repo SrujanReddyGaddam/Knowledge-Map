@@ -12,11 +12,14 @@ import { facetOf, type Facet } from './facets';
 import { safeMode } from './data';
 import { setTaskInRaw, taskKey } from './taskScan';
 import { rawNote, saveNote } from './api';
+import { unlinkedMentions, linkFirstMention } from './mentions';
+import { weeklyPrompt, ticketFor, ofCustomer, pretty } from './cockpitData';
 
 type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
   open: boolean; note: Note | null; index: number; total: number; byId: Map<string, Note>; resolve: (from: Note, name: string) => Note | undefined;
   prev: Note | null; next: Note | null; onNav: (id: string) => void; onTag: (t: string) => void; onFacet: (f: Facet, v: string) => void; tint?: string; onClose: () => void; onDelete: (id: string) => Promise<string | null>;
+  onCockpit: (customer: string) => void;
   editing: boolean; draft: Draft | null; onEdit: () => void; onEditEnd: (saved: boolean) => void; onSaved: (id: string, mtime: number) => void; onDirty: (d: boolean) => void;
 };
 
@@ -50,7 +53,7 @@ function exportPdf(title: string) {
   requestAnimationFrame(() => print());
 }
 
-export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onFacet, tint, onClose, onDelete, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
+export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onFacet, tint, onClose, onDelete, onCockpit, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
   const [tocOpen, setTocOpen] = useState(false);
   const [hist, setHist] = useState(false);
   const [ren, setRen] = useState(false);
@@ -92,6 +95,24 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
     finally { delete box.dataset.busy; }
   };
   const [copied, setCopied] = useState('');
+  // unlinked mentions are computed only when that section is opened
+  const [umOpen, setUmOpen] = useState(false);
+  const [umDone, setUmDone] = useState<Set<string>>(() => new Set());
+  const [umErr, setUmErr] = useState('');
+  useEffect(() => { setUmOpen(false); setUmDone(new Set()); setUmErr(''); }, [note?.id]);
+  const unlinked = useMemo(() => (umOpen && note ? unlinkedMentions(note, [...byId.values()]) : []), [umOpen, note, byId]);
+  const linkMention = async (src: Note) => {
+    if (!note) return; setUmErr('');
+    try {
+      const r = await rawNote(src.id);
+      if (r.status !== 200) throw new Error(r.json.error || 'could not read the note');
+      const text = linkFirstMention(r.json.text, note);
+      if (text === null) throw new Error('the mention is no longer in the file');
+      const sv = await saveNote(src.id, text, r.json.hash);
+      if (sv.status !== 200) throw new Error(sv.json.error || 'save failed (HTTP ' + sv.status + ')');
+      setUmDone(d => new Set(d).add(src.id));
+    } catch (e) { setUmErr(`${shortTitle(src.title)}: ${(e as Error).message}`); }
+  };
   const [resizing, setResizing] = useState(false);
   const [serif, setSerif] = useState(() => { try { return localStorage.getItem('readFont') === 'serif'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('readFont', serif ? 'serif' : 'sans'); } catch {} }, [serif]);
@@ -218,10 +239,25 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
                 <li key={n.id}><button {...hov(n.id)} onClick={() => { hideCard(); onNav(n.id); }}><b>{shortTitle(n.title)}</b><small>{n.section.replace(/-/g, ' ')}</small>{ctx && <span>{ctx}</span>}</button></li>
               ))}</ul> : <div className="src muted">Nothing links here yet.</div>}
             </section>
+            {note.kind !== 'drawing' && <section className="um">
+              <button className="toc-head" onClick={() => setUmOpen(v => !v)} aria-expanded={umOpen}><span className="label">Unlinked mentions{umOpen ? ` (${unlinked.length})` : ''}</span><span className={'chev' + (umOpen ? ' flip' : '')}>&#8964;</span></button>
+              {umOpen && <>
+                {umErr && <div className="tick-err">{umErr}</div>}
+                {unlinked.length ? <ul className="bl">{unlinked.map(({ note: n, ctx }) => (
+                  <li key={n.id} className="um-row"><button {...hov(n.id)} onClick={() => { hideCard(); onNav(n.id); }}><b>{shortTitle(n.title)}</b><small>{n.section.replace(/-/g, ' ')}</small>{ctx && <span>{ctx}</span>}</button>
+                    {n.writable && !safeMode && (umDone.has(n.id) ? <span className="um-ok">linked</span> : <button className="btn um-link" onClick={() => linkMention(n)} title="Turn the first mention in that note into a [[link]] to this note">Link</button>)}</li>
+                ))}</ul> : <div className="src muted">No other note names this one without linking to it.</div>}
+              </>}
+            </section>}
             {note.tags.length > 0 && <section><div className="label">Tags</div><div className="chips">{note.tags.map(t => <button key={t} className="chip tag" onClick={() => onTag(t)}>{t}</button>)}</div></section>}
             {note.source && <section><div className="label">Source</div><div className="src">{/^https?:/.test(note.source) ? <a href={note.source} target="_blank" rel="noreferrer">{note.source}</a> : note.source}</div></section>}
             <section><div className="label">File</div><div className="src muted" title="Full path">{note.abs}</div></section>
             <div className="actions">
+              {note.customer && <button className="btn" onClick={() => onCockpit(note.customer)} title="Everything open and new for this customer  (k)">Open cockpit</button>}
+              {note.type === 'hub' && (note.project || note.customer) && <button className="btn" onClick={() => {
+                const all = [...byId.values()], list = note.project ? all.filter(n => n.project === note.project) : all.filter(n => ofCustomer(n, note.customer));
+                copy('weekly', weeklyPrompt(pretty(note.project || note.customer), ticketFor(note, list), list));
+              }} title="Copy a prompt for the /fde-weekly-jira-update skill with the notes changed this week">{copied === 'weekly' ? 'Prompt copied' : 'Weekly update prompt'}</button>}
               {note.writable && <button className="btn" onClick={onEdit} title="Edit this note's markdown (e)">Edit</button>}
               {note.writable && <button className="btn" onClick={() => setRen(true)} title="Rename or move this note and update links to it">Rename</button>}
               {note.writable && <button className="btn" onClick={() => setHist(true)} title="Saved versions of this note, compare and restore">History</button>}

@@ -79,3 +79,25 @@ export function setTaskInRaw(raw: string, key: string, occurrence: number, done:
   }
   return null;
 }
+
+// ---- snooze: set, move or clear the due date of the nth open task (written as "@due:YYYY-MM-DD") ----
+export function setDueInRaw(raw: string, nth: number, expect: string, due: string | null): string | null {
+  const fm = raw.match(/^---\r?\n[\s\S]*?\r?\n---[^\n]*\n/);
+  const head = fm ? fm[0] : '', rest = raw.slice(head.length);
+  const t = openTasks(rest)[nth];
+  if (!t || plainTask(t[1]) !== plainTask(expect)) return null;
+  const lines = rest.split('\n'), cr = lines[t[0]].endsWith('\r');
+  let l = lines[t[0]].replace(/\r$/, '');
+  const had = DUE_TEXT.test(l);
+  l = l.replace(DUE_TEXT, '').replace(/\s+$/, '');
+  if (due) l += ` @due:${due}`;
+  if (!had && !due) return null;
+  lines[t[0]] = l + (cr ? '\r' : '');
+  return head + lines.join('\n');
+}
+
+// due-date helpers for the Today strip and the snooze menu (local dates)
+const pad = (n: number) => String(n).padStart(2, '0');
+export const isoDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+export const plusDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return isoDay(d); };
+export const nextMonday = () => { const d = new Date(); d.setDate(d.getDate() + (((8 - d.getDay()) % 7) || 7)); return isoDay(d); };

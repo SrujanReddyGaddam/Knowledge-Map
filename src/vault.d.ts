@@ -5,6 +5,7 @@ declare module 'virtual:vault' {
     type: string; customer: string; project: string; sensitivity: string; meta: Record<string, string>;
     kind?: 'drawing'; scene?: { elements: any[]; appState?: { viewBackgroundColor?: string }; files?: any };
   };
-  const data: { vaultName: string; vaults: string[]; lintVaults: string[]; writableVaults: string[]; generated: string; sections: string[]; notes: Note[]; edges: [string, string][]; broken: string[]; brokenLinks: { from: string; target: string }[] };
+  const data: { vaultName: string; vaults: string[]; lintVaults: string[]; writableVaults: string[]; generated: string; sections: string[]; notes: Note[]; edges: [string, string][]; broken: string[]; brokenLinks: { from: string; target: string }[];
+    jiraBase: string; hasProjects: boolean; projectCustomers: Record<string, string[]> };
   export default data;
 }

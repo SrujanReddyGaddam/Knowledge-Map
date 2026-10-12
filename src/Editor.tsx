@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { rawNote, saveNote } from './api';
-import RichText, { type Fmt, type RichHandle } from './RichText';
+import { rawNote, saveNote, attachImage } from './api';
+import RichText, { imageFiles, type Fmt, type RichHandle } from './RichText';
 import type { Note } from 'virtual:vault';
 
 export type Draft = { id: string; text: string; baseHash: string; eol: 'lf' | 'crlf' };
@@ -78,6 +78,24 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
     setSaving(false);
   }, [saving, phase, base.hash, note.id, eol, text, onSaved]);
 
+  // pasted or dropped images are saved beside the note (POST /api/attach) and embedded as ![[file]]
+  const onImages = useCallback(async (files: File[]) => {
+    const out: string[] = [];
+    for (const f of files) {
+      if (f.size > 10 * 1024 * 1024) { setMsg(`${f.name || 'Image'} is over 10 MB, not added.`); continue; }
+      const data = await new Promise<string>((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => bad(r.error); r.readAsDataURL(f); });
+      const r = await attachImage(note.id, f.type.split('/')[1], data).catch(e => ({ status: 0, json: { error: String(e) } }));
+      if (r.status === 200) out.push(`![[${r.json.name}]]`); else setMsg('Image not added: ' + (r.json.error || 'HTTP ' + r.status));
+    }
+    return out;
+  }, [note.id]);
+  const pasteInArea = (e: React.ClipboardEvent<HTMLTextAreaElement> | React.DragEvent<HTMLTextAreaElement>, files: File[]) => {
+    if (!files.length) return;
+    e.preventDefault();
+    const el = e.currentTarget, at = el.selectionStart;
+    onImages(files).then(md => { const t = md.join('\n'); if (t) setText(x => x.slice(0, at) + t + x.slice(at)); });
+  };
+
   const close = () => { if (dirty && !confirm('Discard your unsaved changes?')) return; clearDraft(); onEnd(everSaved.current); };
 
   const status = saving ? 'Saving...' : conflict ? 'File changed on disk' : dirty ? 'Unsaved changes' : savedAt ? 'Saved ' + new Date(savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -88,7 +106,7 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
     <div className="editor">
       <div className="ed-bar">
         <span className={'ed-status' + (dirty ? ' dirty' : '')}>{status}</span>
-        <span className="ed-hint">{eol === 'crlf' ? 'CRLF file, kept as is. ' : ''}&#8984;S save &middot; Esc close</span>
+        <span className="ed-hint">{eol === 'crlf' ? 'CRLF file, kept as is. ' : ''}&#8984;S save &middot; paste images &middot; Esc close</span>
         <button className="btn primary" disabled={!dirty || saving || !!conflict} onClick={() => save()}>Save</button>
         <button className="btn" onClick={close}>{everSaved.current && !dirty ? 'Done' : 'Cancel'}</button>
       </div>
@@ -112,8 +130,9 @@ export default function Editor({ note, draft, onEnd, onSaved, onDirty }: Props) 
         </div>
       )}
       {msg && <div className="ed-err">{msg}</div>}
-      {rich ? <RichText ref={rt} value={text} vault={note.vault} onChange={setText} onEsc={close} onSave={() => { if (dirty && !conflict) save(); }} />
+      {rich ? <RichText ref={rt} value={text} vault={note.vault} onImages={onImages} onChange={setText} onEsc={close} onSave={() => { if (dirty && !conflict) save(); }} />
         : <textarea ref={area} className="ed-area" value={text} spellCheck={false} onChange={e => setText(e.target.value)}
+          onPaste={e => pasteInArea(e, imageFiles(e.clipboardData))} onDrop={e => pasteInArea(e, imageFiles(e.dataTransfer))}
           onKeyDown={e => {
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (dirty && !conflict) save(); }
             else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }

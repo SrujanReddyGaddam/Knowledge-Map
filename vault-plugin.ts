@@ -8,11 +8,14 @@ import LZString from 'lz-string';
 import type { Plugin } from 'vite';
 import { rewriteLinks, otherRelativeRefs, outsideCode, withoutCode } from './rename-links';
 import { parseFrontmatter } from './frontmatter';
+import { appendUnder } from './append-text';
+import { scanProjects, type ProjectsCfg } from './projects';
 
 // sectionDepth: folders whose sections go one level deeper, e.g. { "projects": 2 } gives "projects/acme".
 // lint: check notes against the vault schema (Health tab). sensitivity: default for notes that do not set one.
 type VaultCfg = { name?: string; path: string; exclude?: string[]; rootSection?: string; writable?: boolean; sectionDepth?: Record<string, number>; lint?: boolean; sensitivity?: string };
-type Config = { vaults?: VaultCfg[]; vault?: string; exclude?: string[]; rootSection?: string };
+// projects: code folders whose PLAN/TODO/WORKLOG show as resume cards; jiraBase: ticket links (e.g. https://acme.atlassian.net/browse/)
+type Config = { vaults?: VaultCfg[]; vault?: string; exclude?: string[]; rootSection?: string; projects?: ProjectsCfg; jiraBase?: string };
 // Port, config and backup location can be overridden by env so tests can run a throwaway instance beside the real one.
 const PORT = Number(process.env.KM_PORT) || 7777;
 const HOSTS = new Set([`localhost:${PORT}`, `knowledge.localhost:${PORT}`]);          // Host allowlist (blocks DNS rebinding)
@@ -201,6 +204,8 @@ function loadVaults(cfg: Config) {
     notes: raws.map(({ vi, base, fkey, folder, related, rawLinks, ...n }) => n),
     edges: [...edges].map(e => e.split('\u0000')),
     broken, brokenLinks,
+    jiraBase: typeof cfg.jiraBase === 'string' && /^https:\/\//.test(cfg.jiraBase) ? cfg.jiraBase : '',
+    hasProjects: !!cfg.projects?.roots?.length, projectCustomers: cfg.projects?.customers || {},
   };
   return { data, assets, usedAssets, vaults };
 }
@@ -541,6 +546,120 @@ export default function vault(): Plugin {
         } catch (e) {
           send(res, (e as Error).message === 'too large' ? 413 : 500, { error: String((e as Error).message || e) });
         } finally { if (tmp) try { fs.unlinkSync(tmp); } catch {} }
+      });
+      // Append one line under a "## Heading" of a note (quick capture, daily note, add task). Creates the file from `init` if it is missing.
+      // Same rules as save and create: writable vault, file must be a known note (excluded files are never written), backup first, atomic write.
+      server.middlewares.use('/api/append', async (req, res) => {
+        const bad = guard(req, { post: true, token: true });
+        if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        let tmp = '';
+        try {
+          if (Number(req.headers['content-length'] || 0) > 128 * 1024) { res.setHeader('Connection', 'close'); return send(res, 413, { error: 'too large' }); }
+          const { vault: vn, path: rawPath, heading, line, init } = JSON.parse(await readBody(req, 128 * 1024) || '{}');
+          if (typeof rawPath !== 'string' || rawPath.length > 400 || typeof heading !== 'string' || !heading.trim() || heading.length > 120 || /[\r\n]/.test(heading)
+            || typeof line !== 'string' || !line.trim() || line.length > 4000 || /[\r\n]/.test(line) || (init !== undefined && typeof init !== 'string')) return send(res, 400, { error: 'bad request' });
+          const w = writableRoot(vn);
+          if ('err' in w) return send(res, w.err![0], { error: w.err![1] });
+          const segs = rawPath.trim().replace(/\.md$/i, '').split('/');
+          if (!segsOk(segs)) return send(res, 400, { error: NAME_RULE });
+          const dest = path.join(w.root, ...segs) + '.md', rel = segs.join('/') + '.md';
+          if (!insideVault(dest, w.root)) return send(res, 400, { error: 'That folder is not inside the vault.' });
+          if (fs.existsSync(dest)) {
+            const n = current.data.notes.find((x: any) => x.vault === w.v.name && x.path.split(path.sep).join('/') === rel);
+            // a file this server created seconds ago is not in the map yet (the reload is debounced): allow it, nothing else outside the map
+            let real = ''; try { real = fs.realpathSync(dest); } catch {}
+            const fresh = !n && real && Date.now() - (selfWrites.get(real) || 0) < 30_000 && real.startsWith(w.root + path.sep);
+            if (!n && !fresh) return send(res, 409, { error: 'That file exists but is not a note in the map (excluded?).' });
+            const f = n ? editable(n.id) : { n: { vault: w.v.name, id: '' }, abs: real, root: w.root };
+            if ('err' in f) return send(res, f.err[0], { error: f.err[1] });
+            const cur = fs.readFileSync(f.abs);
+            if (/\r(?!\n)/.test(cur.toString('utf8'))) return send(res, 400, { error: 'This file mixes line endings; edit it in Obsidian.' });
+            const next = Buffer.from(appendUnder(cur.toString('utf8'), heading, line), 'utf8');
+            if (next.length > MAX_EDIT_BYTES) return send(res, 413, { error: 'file too large to edit' });
+            const dir = backupDirFor(f.n.vault, path.relative(f.root, f.abs));
+            fs.mkdirSync(dir, { recursive: true });
+            const bname = new Date().toISOString().replace(/[:.]/g, '-') + '.md';
+            fs.writeFileSync(path.join(dir, bname), cur, { flag: 'wx' });
+            atomicWrite(f.abs, next);
+            try { prune(dir); } catch {}
+            console.log(`[vault] appended to ${f.abs} (backup ${bname})`);
+            return send(res, 200, { ok: true, vault: w.v.name, path: rel, created: false, id: n?.id ?? null });
+          }
+          if (typeof init !== 'string') return send(res, 404, { error: 'note not found' });
+          const clash = current.data.notes.find((x: any) => x.vault === w.v.name && key(baseOf(x.path)) === key(segs[segs.length - 1]));
+          if (clash) return send(res, 409, { error: `A note named "${segs[segs.length - 1]}" already exists in this vault (${clash.path}).` });
+          const text = appendUnder(init, heading, line);
+          if (Buffer.byteLength(text) > MAX_EDIT_BYTES) return send(res, 413, { error: 'note too large' });
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          if (!(fs.realpathSync(path.dirname(dest)) + path.sep).startsWith(w.root + path.sep)) return send(res, 400, { error: 'That folder is not inside the vault.' });
+          try { fs.closeSync(fs.openSync(dest, 'wx', 0o644)); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return send(res, 409, { error: 'A file already exists at that path.' }); throw e; }
+          selfWrites.set(fs.realpathSync(dest), Date.now());
+          try {
+            tmp = path.join(path.dirname(dest), `.${path.basename(dest)}.km-tmp-${process.pid}-${Date.now()}`);
+            const fd = fs.openSync(tmp, 'wx', 0o644);
+            try { fs.writeSync(fd, Buffer.from(text, 'utf8')); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+            fs.renameSync(tmp, dest); tmp = '';
+          } catch (e) { try { if (fs.statSync(dest).size === 0) fs.unlinkSync(dest); } catch {} throw e; }
+          selfWrites.set(fs.realpathSync(dest), Date.now());
+          console.log(`[vault] created ${dest} (append)`);
+          send(res, 200, { ok: true, vault: w.v.name, path: rel, created: true });
+        } catch (e) {
+          send(res, (e as Error).message === 'too large' ? 413 : 500, { error: String((e as Error).message || e) });
+        } finally { if (tmp) try { fs.unlinkSync(tmp); } catch {} }
+      });
+
+      // Pasted or dropped images: saved beside the note as <note>-<timestamp>.<ext>, never replacing a file. Only real png/jpeg/gif/webp bytes.
+      const IMG_MAX = 10 * 1024 * 1024;
+      const MAGIC: Record<string, (b: Buffer) => boolean> = {
+        png: b => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+        jpg: b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+        gif: b => /^GIF8[79]a/.test(b.subarray(0, 6).toString('latin1')),
+        webp: b => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP',
+      };
+      server.middlewares.use('/api/attach', async (req, res) => {
+        const bad = guard(req, { post: true, token: true });
+        if (req.method !== 'POST' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        let tmp = '';
+        try {
+          const lim = Math.ceil(IMG_MAX * 4 / 3) + 4096;
+          if (Number(req.headers['content-length'] || 0) > lim) { res.setHeader('Connection', 'close'); return send(res, 413, { error: 'image too large (10 MB max)' }); }
+          const { id, ext: rawExt, data } = JSON.parse(await readBody(req, lim) || '{}');
+          const ext = String(rawExt || '').toLowerCase().replace(/^jpeg$/, 'jpg');
+          if (typeof data !== 'string' || !MAGIC[ext]) return send(res, 400, { error: 'only png, jpg, gif or webp images' });
+          const f = editable(id);
+          if ('err' in f) return send(res, f.err[0], { error: f.err[1] });
+          const buf = Buffer.from(data, 'base64');
+          if (!buf.length || buf.length > IMG_MAX) return send(res, 413, { error: 'image too large (10 MB max)' });
+          if (!MAGIC[ext](buf)) return send(res, 400, { error: 'the file is not a ' + ext + ' image' });
+          const stamp = new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '').replace('T', '-');
+          const stem = path.basename(f.abs).replace(/\.md$/i, '').replace(/[^\w.-]+/g, '-').slice(0, 80);
+          let name = '', dest = '';
+          for (let i = 1; i < 50; i++) {
+            name = `${stem}-${stamp}${i > 1 ? '-' + i : ''}.${ext}`; dest = path.join(path.dirname(f.abs), name);
+            try { fs.closeSync(fs.openSync(dest, 'wx', 0o644)); break; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; name = ''; }
+          }
+          if (!name) return send(res, 409, { error: 'could not pick a free file name' });
+          selfWrites.set(fs.realpathSync(dest), Date.now());
+          try {
+            tmp = path.join(path.dirname(dest), `.${name}.km-tmp-${process.pid}-${Date.now()}`);
+            const fd = fs.openSync(tmp, 'wx', 0o644);
+            try { fs.writeSync(fd, buf); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+            fs.renameSync(tmp, dest); tmp = '';
+          } catch (e) { try { if (fs.statSync(dest).size === 0) fs.unlinkSync(dest); } catch {} throw e; }
+          selfWrites.set(fs.realpathSync(dest), Date.now());
+          console.log(`[vault] attached ${dest}`);
+          send(res, 200, { ok: true, name });
+        } catch (e) {
+          send(res, (e as Error).message === 'too large' ? 413 : 500, { error: String((e as Error).message || e) });
+        } finally { if (tmp) try { fs.unlinkSync(tmp); } catch {} }
+      });
+
+      // Resume cards: read-only view of code projects' tracking files (see projects.ts). Token required, like every call that returns file text.
+      server.middlewares.use('/api/projects', (req, res) => {
+        const bad = guard(req, { post: false, token: true });
+        if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
+        try { send(res, 200, { projects: scanProjects(cfg.projects) }); }
+        catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }
       });
       server.middlewares.use('/api/delete', async (req, res) => {
         const bad = guard(req, { post: true, token: true });

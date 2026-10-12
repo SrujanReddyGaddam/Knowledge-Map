@@ -129,13 +129,16 @@ export function format(view: EditorView, f: Fmt) {
   } else prefix(view, f);
 }
 
+export const imageFiles = (dt: DataTransfer | null) => [...(dt?.files || [])].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
+
 // ---- component -----------------------------------------------------------------------------------------------------------------
 export type RichHandle = { focus: () => void; format: (f: Fmt) => void };
-type Props = { value: string; vault: string; onChange: (t: string) => void; onSave: () => void; onEsc: () => void };
+// onImages: pasted or dropped image files are handed to the parent, which saves them and returns the markdown to insert (one per file)
+type Props = { value: string; vault: string; onChange: (t: string) => void; onSave: () => void; onEsc: () => void; onImages?: (files: File[]) => Promise<string[]> };
 
-const RichText = forwardRef<RichHandle, Props>(function RichText({ value, vault, onChange, onSave, onEsc }, ref) {
+const RichText = forwardRef<RichHandle, Props>(function RichText({ value, vault, onChange, onSave, onEsc, onImages }, ref) {
   const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null);
-  const cb = useRef({ onChange, onSave, onEsc, vault }); cb.current = { onChange, onSave, onEsc, vault };
+  const cb = useRef({ onChange, onSave, onEsc, vault, onImages }); cb.current = { onChange, onSave, onEsc, vault, onImages };
 
   useEffect(() => {
     const wikiSource = (ctx: CompletionContext) => {
@@ -153,6 +156,9 @@ const RichText = forwardRef<RichHandle, Props>(function RichText({ value, vault,
         })),
       };
     };
+    const insertImages = (view: EditorView, files: File[], at: number) => {
+      cb.current.onImages!(files).then(md => { const t = md.filter(Boolean).join('\n'); if (t) view.dispatch({ changes: { from: at, insert: t }, selection: { anchor: at + t.length } }); });
+    };
     const v = new EditorView({
       parent: host.current!,
       state: EditorState.create({
@@ -161,6 +167,11 @@ const RichText = forwardRef<RichHandle, Props>(function RichText({ value, vault,
           history(), markdown({ base: markdownLanguage }), livePreview, EditorView.lineWrapping,
           autocompletion({ override: [wikiSource], icons: false, closeOnBlur: true, defaultKeymap: true, maxRenderedOptions: 8 }),
           Prec.highest(EditorView.domEventHandlers({
+            paste(e, view) { const f = imageFiles(e.clipboardData); if (!f.length || !cb.current.onImages) return false; e.preventDefault(); insertImages(view, f, view.state.selection.main.head); return true; },
+            drop(e, view) {
+              const f = imageFiles(e.dataTransfer); if (!f.length || !cb.current.onImages) return false;
+              e.preventDefault(); insertImages(view, f, view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.state.selection.main.head); return true;
+            },
             keydown(e, view) {
               if (e.key !== 'Escape') return false;
               e.stopPropagation();                                   // the page's own Esc handling must not see it

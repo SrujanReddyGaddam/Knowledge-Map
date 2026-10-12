@@ -4,6 +4,8 @@ A local, 3D interactive map of your Obsidian vaults. Notes are spheres, links ar
 
 Features: search with operators, filters (vault, section, tag), local graph focus, Browse drawer (recent, tree, health), backlinks with context, callouts and contents list, hover previews, Excalidraw drawings, 5 color palettes with light/dark, optional click sounds.
 
+For the workday: a **Today** view (`h`: due and overdue tasks, where each code project was left off, today's captures), a **customer cockpit** (`k`: open tasks, changes since you last looked, open questions, projects, meetings, people, tickets, linked code projects, and a Brief me recap), **quick capture** (`c`) into the inbox with a line in the daily journal (`d`), a **Tasks** view (`t`) with add, snooze and tick, a **command palette** (Cmd+K), **unlinked mentions** with one-click linking, pasted images in the editor, and a prompt builder for weekly Jira updates.
+
 ## Quick start
 Needs Node `^20.19.0 || >=22.12.0`.
 
@@ -39,6 +41,8 @@ Then open http://knowledge.localhost:7777. Logs: `~/Library/Logs/knowledge-map.l
 
 ## Notes
 - Read-only on your vaults by default. Set `"writable": true` on a vault in `config.json` to allow editing its markdown notes: saves are atomic, back up the previous version to `~/.knowledge-map/backups` first, and refuse to overwrite a file that changed on disk meanwhile. Open a note and press `e` (or the Edit button), Cmd+S to save. The editor is a live-preview rich editor (headings, bold, lists and links render as you type; the file stays plain markdown) with a formatting toolbar, Cmd+B/I/K, and `[[` suggests note names to link; Source mode gives the raw text. Export PDF prints a note via your browser's Save as PDF. The target button on the map turns on focus mode: every note you pick becomes the focus until Esc. The Rename button renames or moves a note inside its vault and updates the links that point to it (with a preview first; every changed note is backed up). The History button lists saved versions, shows what differs from the current file and restores one (restoring is itself backed up, so it can be undone). The Delete button in the note panel moves a note to your Trash.
+- Resume cards: add `"projects": { "roots": ["~/Developer"] }` to `config.json` and every folder there with a `PLAN.md`, `TODO.md` or `WORKLOG.md` shows as a card (plan, latest worklog entry and its Next line, open TODOs, git branch) in Today and in the matching customer cockpit. Folders are matched to customers by name; add `"customers": { "acme": ["acme", "some-folder"] }` under `projects` to map others. These files are only read, never written, and are hidden in Safe mode.
+- `"jiraBase": "https://<site>.atlassian.net/browse/"` turns ticket keys in the cockpit into links.
 - Port 7777 is fixed (see AGENTS.md to change it).
 - Not supported: `.canvas`, `.base`, PDF embeds, running Dataview queries.
 - Keep this app private if your vaults hold sensitive material; the code is safe to share, your notes are not.
