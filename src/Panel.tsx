@@ -9,6 +9,9 @@ import Rename from './Rename';
 import type { Note } from 'virtual:vault';
 import { esc, restTitle, shortTitle } from './util';
 import { facetOf, type Facet } from './facets';
+import { safeMode } from './data';
+import { setTaskInRaw, taskKey } from './taskScan';
+import { rawNote, saveNote } from './api';
 
 type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
@@ -66,6 +69,28 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const [delErr, setDelErr] = useState('');
   useEffect(() => { setConfirmDel(false); setDelErr(''); }, [note?.id]);
   const [expanded, setExpanded] = useState(false);
+  const [tickErr, setTickErr] = useState('');
+  useEffect(() => setTickErr(''), [note?.id]);
+  // a click on a checkbox in the note: find the same task in the file (by its text) and save the flipped box; the page refreshes after
+  const onTick = async (box: HTMLInputElement) => {
+    if (!note || box.dataset.busy) return;
+    const own = (b: HTMLInputElement) => { const li = b.closest('li')!.cloneNode(true) as HTMLElement; li.querySelectorAll('ul, ol, a, span.wl, input').forEach(x => x.remove()); return taskKey(li.textContent || ''); };
+    const key = own(box), boxes = [...(mdRef.current?.querySelectorAll<HTMLInputElement>('input.task-box') || [])];
+    const occurrence = boxes.slice(0, boxes.indexOf(box)).filter(b => own(b) === key).length;
+    const want = !box.hasAttribute('checked');
+    box.dataset.busy = '1'; setTickErr('');
+    try {
+      const r = await rawNote(note.id);
+      if (r.status !== 200) throw new Error(r.json.error || 'could not read the note');
+      const text = setTaskInRaw(r.json.text, key, occurrence, want, /^\s*##\s+Summary\s*\n/i.test(note.body) && !!note.body.replace(/^\s*##\s+Summary\s*\n[\s\S]*?(?=\n##\s|(?![\s\S]))/i, '').trim());
+      if (text === null) throw new Error('could not find this task in the file (open the editor with e to change it)');
+      const sv = await saveNote(note.id, text, r.json.hash);
+      if (sv.status !== 200) throw new Error(sv.json.error || 'save failed (HTTP ' + sv.status + ')');
+      box.checked = want; want ? box.setAttribute('checked', '') : box.removeAttribute('checked');
+      onSaved(note.id, Math.round(sv.json.mtime || Date.now()));
+    } catch (e) { box.checked = !want; setTickErr((e as Error).message); }
+    finally { delete box.dataset.busy; }
+  };
   const [copied, setCopied] = useState('');
   const [resizing, setResizing] = useState(false);
   const [serif, setSerif] = useState(() => { try { return localStorage.getItem('readFont') === 'serif'; } catch { return false; } });
@@ -99,6 +124,8 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
       `<blockquote class="callout c-${type.toLowerCase()}"><p class="callout-title">${title || type[0].toUpperCase() + type.slice(1).toLowerCase()}</p><p>`);
     // Dataview is not executed here; say so instead of showing a bare query
     out = out.replace(/<pre><code class="language-dataview(?:js)?">/g, '<div class="dv-note">Dataview query, not run in this viewer</div>$&');
+    // checkboxes can be ticked in writable notes (not in Safe mode, where link text is masked and would not match the file)
+    if (note.writable && !safeMode) out = out.replace(/<input (checked="" )?disabled="" type="checkbox">/g, (_, c?: string) => `<input ${c || ''}type="checkbox" class="task-box" title="Click to ${c ? 'untick' : 'tick'} (saves the note)">`);
     // heading ids for the table of contents
     const toc: Toc = [], seen = new Map<string, number>();
     out = out.replace(/<h([2-4])>([\s\S]*?)<\/h\1>/g, (_, lv: string, inner: string) => {
@@ -177,8 +204,9 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             </section>}
             {note.kind !== 'drawing' && <section className="print-keep">
               <div className="label">Full note</div>
+              {tickErr && <div className="tick-err">{tickErr}</div>}
               <div ref={mdRef} className={'md' + (expanded || maxed ? ' expanded' : '')} dangerouslySetInnerHTML={{ __html: html }}
-                onClick={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) { hideCard(); onNav(a.dataset.id!); } }}
+                onClick={e => { const t = e.target as HTMLElement; if (t instanceof HTMLInputElement && t.classList.contains('task-box')) { e.preventDefault(); onTick(t); return; } const a = t.closest('a.wl[data-id]') as HTMLElement | null; if (a) { hideCard(); onNav(a.dataset.id!); } }}
                 onMouseOver={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) showCard(a); }}
                 onMouseOut={e => { if ((e.target as HTMLElement).closest('a.wl[data-id]')) hideCard(); }} />
               {!maxed && <button className="read-more" onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : 'Read more'} <span className={expanded ? 'flip' : ''}>&#8964;</span></button>}

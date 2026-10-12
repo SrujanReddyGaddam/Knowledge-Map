@@ -3,6 +3,8 @@ import vault, { safeMode, setSafeMode } from './data';
 import Graph from './Graph';
 import Panel from './Panel';
 import Browse from './Browse';
+import Tasks from './Tasks';
+import { collectTasks } from './taskScan';
 import { loadSeen, saveSeen, type Seen } from './seen';
 import { trashNote } from './api';
 import { readDraft, clearDraft, type Draft } from './Editor';
@@ -104,6 +106,11 @@ export default function App() {
   const [browseKey, setBrowseKey] = useState(0);
   const [browse, setBrowse] = useState(() => { try { return localStorage.getItem('browse') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('browse', browse ? '1' : '0'); } catch {} }, [browse]);
+  // Tasks: every open "- [ ]" checkbox across the vaults, in its own full-page view over the map (the note panel opens on top of it)
+  const allTasks = useMemo(() => collectTasks(vault.notes), []);
+  const [tasksOpen, setTasksOpen] = useState(() => { try { return localStorage.getItem('tasks') === '1'; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem('tasks', tasksOpen ? '1' : '0'); } catch {} }, [tasksOpen]);
+  const tasksRef = useRef(tasksOpen); tasksRef.current = tasksOpen;
   // Survive the live-reload that follows any vault file change (e.g. deleting a note).
   useEffect(() => { try { sessionStorage.setItem('filters', JSON.stringify({ q: query, section, tags, vaults: vaultSel, facets, focus })); } catch {} }, [query, section, tags, vaultSel, facets, focus]);
   const [hide, setHide] = useState(() => { try { const m = new URLSearchParams(location.search).get('mode') || localStorage.getItem('filterMode'); return m !== 'dim'; } catch { return true; } });
@@ -202,10 +209,11 @@ export default function App() {
     const k = (e: KeyboardEvent) => {
       const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || !!(document.activeElement as HTMLElement | null)?.isContentEditable;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); const el = document.getElementById('search') as HTMLInputElement | null; el?.focus(); el?.select(); return; }
-      if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else if (focusModeRef.current) { setFocusMode(false); setFocus(null); } else select(null); }
+      if (e.key === 'Escape') { if (typing) { setQuery(''); (document.activeElement as HTMLElement).blur(); } else if (maxedRef.current) setMaxed(false); else if (tasksRef.current) { if (selNote) select(null); else setTasksOpen(false); } else if (focusModeRef.current) { setFocusMode(false); setFocus(null); } else select(null); }
       else if (typing) return;
       else if (e.key === '/') { e.preventDefault(); document.getElementById('search')?.focus(); }
       else if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) setBrowse(v => !v);
+      else if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) setTasksOpen(v => !v);
       else if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && vault.writableVaults.length && !editIdRef.current) { e.preventDefault(); setNewOpen(true); }
       else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && selNote?.writable && selNote.kind !== 'drawing') { e.preventDefault(); setEditId(selNote.id); }
       else if (e.key === 'ArrowRight' && next) select(next.id);
@@ -246,6 +254,10 @@ export default function App() {
           <button className={'icon-btn' + (browse ? ' on' : '')} onClick={() => setBrowse(v => !v)} aria-label="Browse notes" title="Browse: new, recent, tree, health  (b)">
             {changed.size > 0 && <span className="count-badge">{changed.size > 99 ? '99+' : changed.size}</span>}
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7" /></svg>
+          </button>
+          <button className={'icon-btn' + (tasksOpen ? ' on' : '')} onClick={() => setTasksOpen(v => !v)} aria-label="Tasks" title={`Tasks: ${allTasks.length} open checkboxes from all notes  (t)`}>
+            {allTasks.length > 0 && <span className="count-badge">{allTasks.length > 99 ? '99+' : allTasks.length}</span>}
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" /><path d="M5.5 8.2l1.8 1.8 3.4-3.8" /></svg>
           </button>
           {vault.writableVaults.length > 0 && <button className="icon-btn" onClick={() => setNewOpen(true)} aria-label="New note" title="New note from a template  (n)">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M8 3v10M3 8h10" /></svg>
@@ -317,6 +329,7 @@ export default function App() {
         {vault.notes.length} notes &middot; {vault.vaults.length} {vault.vaults.length === 1 ? 'vault' : 'vaults'}
         {changed.size > 0 && <> &middot; <button onClick={() => { try { localStorage.setItem('browseTab', 'new'); } catch {} setBrowseKey(k => k + 1); setBrowse(true); setIntroMsg(false); }}>{changed.size} updated since you last looked</button></>}
       </div>}
+ {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} onSelect={select} onClose={() => setTasksOpen(false)} canTick={!safeMode} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
@@ -325,7 +338,7 @@ export default function App() {
             <div className="eyebrow">Knowledge map</div>
             <p><b>{vault.vaults.join(' + ')}</b><br />{vault.notes.length} notes, {vault.edges.length} links{vault.broken.length ? `, ${vault.broken.length} broken wikilinks` : ''}{safeMode ? `. Safe mode: ${vault.hiddenCount} notes hidden` : ''}</p>
             <div className="eyebrow">Controls</div>
-            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
+            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>/</kbd> search &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>t</kbd> tasks &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
           </div>
         )}
       </div>

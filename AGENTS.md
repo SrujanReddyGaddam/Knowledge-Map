@@ -53,7 +53,7 @@ Frontmatter fields the app understands beyond title/tags/summary/status/source: 
 ## Layout
 | File | Role |
 |---|---|
-| `vault-plugin.ts` | Vite plugin. Reads vaults into the virtual module `virtual:vault` (notes, edges, broken links, mtimes), watches for changes (700ms debounce then full reload), serves vault images at `/vault-assets/`, and exposes the only write path `POST /api/delete`. |
+| `vault-plugin.ts` | Vite plugin. Reads vaults (a file that cannot be read, e.g. an iCloud file mid-download, is skipped and listed as unresolved, never fatal) into the virtual module `virtual:vault` (notes, edges, broken links, mtimes), watches for changes (700ms debounce then full reload), serves vault images at `/vault-assets/`, and exposes the only write path `POST /api/delete`. |
 | `src/App.tsx` | State and layout: search, filters (vault/section/tag/focus), Dim/Hide mode, palettes, sound, keyboard shortcuts. |
 | `src/Graph.tsx` | three.js scene, force simulation, camera, drag/pan/zoom, labels. Camera is saved to `sessionStorage` so reloads keep the view. |
 | `src/Panel.tsx` | Side panel: markdown render, wikilinks, callouts, contents list, backlinks with context, hover preview cards, Excalidraw embeds, actions. |
@@ -65,6 +65,7 @@ Frontmatter fields the app understands beyond title/tags/summary/status/source: 
 | `src/facets.ts` | Frontmatter facets (type, customer, project, status, sensitivity), color-by-type groups (3 validated hues, everything else neutral) and the schema lint. |
 | `src/NewNote.tsx` | New note dialog (`n` or the + button): vault, template, title, folder, file name preview; creates through `/api/create`, then the page reloads and opens the note in the editor. |
 | `frontmatter.ts`, `scripts/build-indexes.ts` | Shared frontmatter parser; the index builder (`node scripts/build-indexes.ts <vault> [--check]`) regenerates lists between `<!-- km:list key=value folder=x group=type sort=updated -->` and `<!-- km:end -->` markers in hub notes. |
+| `src/Tasks.tsx`, `src/taskScan.ts` | Tasks view (checkbox button beside Browse, key `t`, Esc closes): a full page over the map with every open `- [ ]` across the vaults (code blocks skipped), dated ones on top, cards by note or by customer; clicking a task opens the note panel over the view; checkboxes in the rendered note are clickable too (`setTaskInRaw`, matched by text without links); ticking one reads `/api/raw`, flips the nth open checkbox if its text still matches, and saves through `/api/save` (writable vaults only, off in Safe mode). |
 | `src/seen.ts` | Per-browser record of which note versions were seen (localStorage) to flag updated notes. |
 | `src/search.ts` | Search index and ranking; operators `tag:` `vault:` `path:` `"phrase"` `-exclude`, and `key:value` / `-key:value` for any frontmatter key that exists in some note. |
 | `src/palettes.ts`, `src/sound.ts` | Color palettes (tinted neutrals + one accent) and synthesized click sounds. |

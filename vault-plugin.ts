@@ -121,7 +121,8 @@ function loadVaults(cfg: Config) {
     for (const f of files.filter(f => (f.endsWith('.md') || f.endsWith('.excalidraw')) && !skip(path.relative(v.path, f).split(path.sep).join('/')))) {
       const rel = path.relative(v.path, f), parts = rel.split(path.sep), isRawXl = f.endsWith('.excalidraw');
       const base = path.basename(f).replace(/\.md$/i, '').replace(/\.excalidraw$/i, '');
-      const text = fs.readFileSync(f, 'utf8');
+      // one unreadable file (an iCloud file being downloaded or evicted, a permission problem) must not take the whole map down: skip it
+      let text: string; try { text = fs.readFileSync(f, 'utf8'); } catch (e) { broken.push(`not readable, skipped: ${rel} (${(e as NodeJS.ErrnoException).code || e})`); continue; }
       let mtime = 0; try { mtime = Math.round(fs.statSync(f).mtimeMs); } catch {}
       const scene = isRawXl || /excalidraw-plugin:/.test(text.slice(0, 400)) ? readScene(text, isRawXl) : null;
       const parsed = isRawXl ? { fm: {} as Record<string, any>, body: '', hasFm: false } : parseFrontmatter(text);

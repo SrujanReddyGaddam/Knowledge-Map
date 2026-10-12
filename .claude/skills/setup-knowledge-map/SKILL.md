@@ -51,7 +51,7 @@ For every existing vault, scan the markdown for likely secrets (same patterns as
 ## 6. Hand over
 Tell them, briefly:
 - The URL, how to start or stop it (or that it runs at login), and where the log is.
-- Keys: `/` search, `b` browse, `n` new note, `e` edit, drag to rotate, scroll to zoom, the shield for Safe mode.
+- Keys: `/` search, `b` browse, `t` tasks (every open checkbox from all notes), `n` new note, `e` edit, drag to rotate, scroll to zoom, the shield for Safe mode.
 - Their vault has agent skills in `<vault>/.claude/skills/`: start Claude Code in the vault folder and say "triage my inbox", "lint the vault", "harvest <project>", or "organize my vault".
 - Offer the next step: "Want me to organize and sanitize your existing notes now?" If yes, follow `<vault>/.claude/skills/organize-vault/SKILL.md` (for a vault that was not adopted, run step 4, item 3 first so the skill and rules are there). It snapshots everything first and asks twice before changing anything.
 - What stays private: everything. `config.json` is git-ignored, vault content never enters this repo, and nothing is uploaded. Do not commit, push or open issues with their paths or notes.
