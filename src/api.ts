@@ -33,3 +33,5 @@ export const createNote = (vault: string, path: string, text: string) => call('/
 export const appendLine = (vault: string, path: string, heading: string, line: string, init?: string) => call('/api/append', { vault, path, heading, line, init });
 export const attachImage = (id: string, ext: string, data: string) => call('/api/attach', { id, ext, data });
 export const listProjects = () => call('/api/projects');
+export type Commit = { hash: string; date: string; subject: string; files: { status: 'A' | 'M' | 'D'; path: string }[] };
+export const gitLog = (vault: string, since: string, until: string) => call(`/api/gitlog?vault=${encodeURIComponent(vault)}&since=${since}&until=${until}`);

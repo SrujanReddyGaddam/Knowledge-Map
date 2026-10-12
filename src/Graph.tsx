@@ -7,7 +7,7 @@ import { shortTitle } from './util';
 import type { Colors } from './palettes';
 
 type GNode = { id: string; note: Note; tx?: number; ty?: number; tz?: number; R0: number; show: number; showT: number; x: number; y: number; z: number; fx?: number | null; fy?: number | null; fz?: number | null; r: number; t: number; R: number; hov: number; dim: number; lab: number; sx: number; sy: number; sr: number; wz: number; front: number; p: [number, number, number]; ix: number; iy: number; iz: number; idl: number; ie: number };
-type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; tints?: Map<string, string> | null; hide: boolean; intro?: boolean; onIntroDone?: () => void; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
+type Props = { notes: Note[]; edges: [string, string][]; selectedId: string | null; panelWidth: number; colors: Colors; matchIds: Set<string> | null; markIds?: Set<string> | null; tints?: Map<string, string> | null; hide: boolean; path?: string[] | null; intro?: boolean; onIntroDone?: () => void; onSelect: (id: string) => void; onHover?: (id: string | null) => void };
 
 const SPHERE = 330, DEFAULT_DIST = 1080, FOV = 46, INTRO = 1.9, FLY = 0.95;   // intro: total seconds, and each note's flight time
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -17,7 +17,7 @@ export default function Graph(props: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const live = useRef(props);
   live.current = props;
-  const api = useRef<{ focus: (id: string | null) => void; panel: (w: number) => void; filter: () => void } | null>(null);
+  const api = useRef<{ focus: (id: string | null) => void; panel: (w: number) => void; filter: () => void; path: (ids: string[] | null) => void } | null>(null);
 
   useEffect(() => {
     const host = wrap.current!;
@@ -34,7 +34,7 @@ export default function Graph(props: Props) {
     });
     const byId = new Map(nodes.map(n => [n.id, n]));
     (window as unknown as { __km?: unknown }).__km = { nodes };
-    const links = edges.map(([s, t]) => ({ source: byId.get(s)!, target: byId.get(t)! }));
+    const links = edges.map(([s, t]) => ({ source: byId.get(s)!, target: byId.get(t)!, k: [s, t].sort().join('\u0000') }));
     const nb = new Map(notes.map(n => [n.id, new Set([...n.links, ...n.backlinks])]));
     const pin = { node: null as GNode | null, group: new Set<GNode>(), slots: new Map<GNode, [number, number, number]>() };   // a dragged node left in place together with its linked notes
     const unpin = () => { if (pin.node) { pin.node.fx = pin.node.fy = pin.node.fz = null; pin.node = null; pin.group = new Set(); pin.slots = new Map(); refreshShell(); sim.alpha(Math.max(sim.alpha(), 0.3)); } };
@@ -141,6 +141,8 @@ export default function Graph(props: Props) {
     resize(); const ro = new ResizeObserver(resize); ro.observe(host);
 
     let lastPanel = live.current.panelWidth, lastSig = '';
+    // path finder: the notes on the path stay lit, the rest dims, and its links light up one after another (edge index -> order)
+    let pth: { nodes: Set<string>; edges: Map<string, number>; t0: number } | null = null;
     const defaultDist = () => Math.max(700, DEFAULT_DIST * (0.55 + 0.45 * shell.tgt));
     api.current = {
       // Hide mode: non-matching nodes leave the simulation and fade out; the rest regroup into a smaller sphere
@@ -174,8 +176,23 @@ export default function Graph(props: Props) {
         if (!selectedId && !intro.on) { tween?.kill(); tween = gsap.to(cam, { target: defaultDist(), tx: 0, ty: 0, duration: 1.1, ease: 'power2.inOut' }); }
       },
       panel: w => { const big = Math.abs(w - lastPanel) > 160; lastPanel = w; gsap.killTweensOf(cam, 'off'); gsap.to(cam, { off: w / 2, duration: big ? 0.9 : 0.18, ease: big ? 'power3.out' : 'none' }); },
+      path: ids => {
+        if (!ids || ids.length < 2) { pth = null; return; }
+        pth = { nodes: new Set(ids), edges: new Map(ids.slice(1).map((id, i) => [[ids[i], id].sort().join('\u0000'), i])), t0: performance.now() };
+        if (intro.on) return;
+        // turn the ball so the middle of the path faces the camera, and back off far enough to see all of it
+        const ps = ids.map(id => byId.get(id)!).filter(Boolean), c = [0, 0, 0];
+        ps.forEach(n => { c[0] += n.x / ps.length; c[1] += n.y / ps.length; c[2] += n.z / ps.length; });
+        const spread = Math.max(...ps.map(n => Math.hypot(n.x - c[0], n.y - c[1], n.z - c[2])));
+        const rho = Math.hypot(c[0], c[2]), ty = Math.atan2(-c[0], c[2]), tx = Math.atan2(c[1], rho);
+        let dy = ty - rot.y; dy = (((dy + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+        tween?.kill(); vel.x = vel.y = 0;
+        tween = gsap.to(rot, { x: clamp(tx, -1.2, 1.2), y: rot.y + dy, duration: 1.3, ease: 'power3.inOut' });
+        gsap.to(cam, { target: clamp(Math.hypot(...c) + spread * 2.4 + 420, 620, 1900), tx: 0, ty: 0, duration: 1.3, ease: 'power3.inOut' });
+      },
       focus: id => {
-        if (intro.on) { intro.pending = id; return; }   // land on the note once the intro has settled
+        if (intro.on) { intro.pending = id; return; }
+        if (pth && id && pth.nodes.has(id)) return;   // stepping along a path keeps the whole path in view   // land on the note once the intro has settled
         tween?.kill();
         if (!id) { if (restored) { restored = false; return; } tween = gsap.to(cam, { target: defaultDist(), tx: 0, ty: 0, duration: 1.2, ease: 'power2.inOut' }); idleSince = performance.now(); return; }
         restored = false;
@@ -313,7 +330,8 @@ export default function Graph(props: Props) {
         n.sx = (v3.x * 0.5 + 0.5) * W; n.sy = (-v3.y * 0.5 + 0.5) * H;
         n.sr = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * pxPerUnit / (cam.dist - z2);
         const matchQ = !matchIds || matchIds.has(n.id) || n.showT === 0;
-        n.dim += (((!matchQ) || (focus && n.id !== focus && !fnb!.has(n.id)) ? 1 : 0) - n.dim) * fast;
+        const off = pth ? !pth.nodes.has(n.id) && n.id !== hover : !!focus && n.id !== focus && !fnb!.has(n.id);
+        n.dim += (((!matchQ) || off ? 1 : 0) - n.dim) * fast;
         n.hov += ((n.id === hover || n.id === selectedId ? 1 : 0) - n.hov) * fast;
       }
 
@@ -331,21 +349,23 @@ export default function Graph(props: Props) {
 
       // edges: bowed curves. Only the focused node's links are drawn; everything else recedes to near-nothing
       const zoomK = clamp(1150 / cam.dist, 0.25, 1.1);
+      const hotId = pth ? hover : focus, quiet = !!focus || !!pth, pathAge = pth ? (now - pth.t0) / 1000 : 0;
       links.forEach((l, i) => {
-        const ls = l.source, lt = l.target, hot = !!focus && (ls.id === focus || lt.id === focus);
+        const ls = l.source, lt = l.target, step = pth?.edges.get(l.k);
+        const hot = (step !== undefined && pathAge * 2.8 > step + 0.4) || (!!hotId && (ls.id === hotId || lt.id === hotId));
         const A = ls.p, B = lt.p, dx = B[0] - A[0], dy = B[1] - A[1], flat = Math.hypot(dx, dy) || 1, bow = 0.13 * Math.hypot(dx, dy, B[2] - A[2]);
         const mx = (A[0] + B[0]) / 2 - (dy / flat) * bow, my = (A[1] + B[1]) / 2 + (dx / flat) * bow, mz = (A[2] + B[2]) / 2;
         const curve = (t: number) => { const u = 1 - t; tmpP[0] = u * u * A[0] + 2 * u * t * mx + t * t * B[0]; tmpP[1] = u * u * A[1] + 2 * u * t * my + t * t * B[1]; tmpP[2] = u * u * A[2] + 2 * u * t * mz + t * t * B[2]; };
         const fade = 1 - Math.max(ls.dim, lt.dim) * 0.9, avg = (ls.front + lt.front) / 2;
         const vs = smooth(Math.min(ls.show, lt.show)) * linkK;
-        const lineAmt = (hot ? 0.8 * Math.max(zoomK, 0.6) : (0.04 + 0.2 * avg * avg) * (focus ? 0.06 : 1) * zoomK * zoomK * fade) * vs;
+        const lineAmt = (hot ? 0.8 * Math.max(zoomK, 0.6) : (0.04 + 0.2 * avg * avg) * (quiet ? 0.06 : 1) * zoomK * zoomK * fade) * vs;
         for (let k = 0; k < SEG; k++) for (let e = 0; e < 2; e++) {
           curve((k + e) / SEG); const vi = (i * SEG + k) * 6 + e * 3;
           lp[vi] = tmpP[0]; lp[vi + 1] = tmpP[1]; lp[vi + 2] = tmpP[2];
           tmp.copy(bg).lerp(hot ? accent : ink, lineAmt * (hot ? 1 : 0.35 + 0.65 * (ls.front + (lt.front - ls.front) * ((k + e) / SEG))));
           lc[vi] = tmp.r; lc[vi + 1] = tmp.g; lc[vi + 2] = tmp.b;
         }
-        const dotAmt = (hot ? 0.95 : focus ? 0 : (0.2 + 0.45 * avg) * fade * zoomK) * vs, boost = hot ? 3.2 : 1;
+        const dotAmt = (hot ? 0.95 : quiet ? 0 : (0.2 + 0.45 * avg) * fade * zoomK) * vs, boost = hot ? 3.2 : 1;
         tmp.copy(bg).lerp(hot ? accent : ink, dotAmt);
         for (let j = 0; j < PER; j++) {
           const idx = i * PER + j; phase[idx] = (phase[idx] + speed[idx] * boost * dt) % 1;
@@ -372,7 +392,7 @@ export default function Graph(props: Props) {
       const boxes: number[][] = [];
       const prio = [...nodes].sort((a, b) => (b.hov - a.hov) || (b.sr - a.sr));
       for (const n of prio) {
-        const el = els[nodes.indexOf(n)], forced = (n.hov > 0.3 || (focus && fnb!.has(n.id)) || n.id === selectedId) && n.show > 0.5;
+        const el = els[nodes.indexOf(n)], forced = (n.hov > 0.3 || (pth ? pth.nodes.has(n.id) : focus && fnb!.has(n.id)) || n.id === selectedId) && n.show > 0.5;
         const size = Math.min(26, 7 + n.sr * 0.2) * (1 + n.hov * 0.1), cw = size * 0.62, tiny = n.sr < 7 && !(n.hov > 0.3 || n.id === selectedId);
         const w = el.textContent!.length * cw + 6, h = size + 4, bx = n.sx - w / 2, by = n.sy - n.sr - 3 - h;
         let ok = !tiny && n.show > 0.5 && (!!forced || n.sr > 5);
@@ -399,6 +419,7 @@ export default function Graph(props: Props) {
   useEffect(() => { api.current?.filter(); }, [props.matchIds, props.hide]);
   useEffect(() => { api.current?.focus(props.selectedId); }, [props.selectedId]);
   useEffect(() => { api.current?.panel(props.panelWidth); }, [props.panelWidth]);
+  useEffect(() => { api.current?.path(props.path ?? null); }, [props.path]);
 
   return <div ref={wrap} className="graph-host" />;
 }

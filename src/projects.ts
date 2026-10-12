@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import vault, { safeMode } from './data';
 import { listProjects } from './api';
+import { projectCustomer } from './cockpitData';
 
 // Resume cards data: the code projects' tracking files, read by the server on request (never in Safe mode: these files have no sensitivity).
 export type Project = {
@@ -25,12 +26,4 @@ export function useProjects() {
   return { list, err, refresh: () => { setErr(''); setN(x => x + 1); } };
 }
 
-// which customer a project belongs to: config "projects.customers" ({"acme": ["acme", "acme-portal"]}) first,
-// else the first word of the customer slug found in the folder or branch name (acme-corp -> "acme")
-const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-export function customerOf(p: Project, customers: string[]): string {
-  const hay = squash(p.name) + ' ' + squash(p.branch);
-  for (const [c, words] of Object.entries(vault.projectCustomers)) if (words.some(w => squash(w) && hay.includes(squash(w)))) return c;
-  for (const c of customers) { const w = squash(c.split('-')[0]); if (w.length >= 3 && hay.includes(w)) return c; }
-  return '';
-}
+export const customerOf = (p: Project, customers: string[]) => projectCustomer(p, customers, vault.projectCustomers);

@@ -8,8 +8,10 @@ import History from './History';
 import Rename from './Rename';
 import type { Note } from 'virtual:vault';
 import { esc, restTitle, shortTitle } from './util';
+import { contextPack } from './contextPack';
 import { facetOf, type Facet } from './facets';
-import { safeMode } from './data';
+import vault, { safeMode } from './data';
+const vaultNotes = vault.notes, jiraBase = vault.jiraBase;
 import { setTaskInRaw, taskKey } from './taskScan';
 import { rawNote, saveNote } from './api';
 import { unlinkedMentions, linkFirstMention } from './mentions';
@@ -20,6 +22,7 @@ type Props = {
   open: boolean; note: Note | null; index: number; total: number; byId: Map<string, Note>; resolve: (from: Note, name: string) => Note | undefined;
   prev: Note | null; next: Note | null; onNav: (id: string) => void; onTag: (t: string) => void; onFacet: (f: Facet, v: string) => void; tint?: string; onClose: () => void; onDelete: (id: string) => Promise<string | null>;
   onCockpit: (customer: string) => void;
+  onPath: () => void;
   editing: boolean; draft: Draft | null; onEdit: () => void; onEditEnd: (saved: boolean) => void; onSaved: (id: string, mtime: number) => void; onDirty: (d: boolean) => void;
 };
 
@@ -53,7 +56,7 @@ function exportPdf(title: string) {
   requestAnimationFrame(() => print());
 }
 
-export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onFacet, tint, onClose, onDelete, onCockpit, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
+export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, open, note, index, total, byId, resolve, prev, next, onNav, onTag, onFacet, tint, onClose, onDelete, onCockpit, onPath, editing, draft, onEdit, onEditEnd, onSaved, onDirty }: Props) {
   const [tocOpen, setTocOpen] = useState(false);
   const [hist, setHist] = useState(false);
   const [ren, setRen] = useState(false);
@@ -261,6 +264,8 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               {note.writable && <button className="btn" onClick={onEdit} title="Edit this note's markdown (e)">Edit</button>}
               {note.writable && <button className="btn" onClick={() => setRen(true)} title="Rename or move this note and update links to it">Rename</button>}
               {note.writable && <button className="btn" onClick={() => setHist(true)} title="Saved versions of this note, compare and restore">History</button>}
+              <button className="btn" onClick={() => copy('claude', contextPack(vaultNotes, note.id, jiraBase))} title="Copy a context pack for Claude Code: this note, its links and backlinks (paths and summaries), open tasks, questions and tickets">{copied === 'claude' ? 'Context copied' : 'Hand to Claude'}</button>
+              <button className="btn" onClick={onPath} title="Shortest link path from this note to another one, drawn on the map  (p)">Path to...</button>
               <a className="btn primary" href={obsidian}>Open in Obsidian</a>
               <button className="btn" onClick={() => exportPdf(shortTitle(note.title))} title="Print this note, or choose Save as PDF in the print dialog">Export PDF</button>
               <button className="btn" onClick={() => { if (!note.abs) { location.reload(); return; } copy('path', note.abs); }} title={note.abs}>{copied === 'path' ? 'Path copied' : 'Copy path'}</button>

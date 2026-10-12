@@ -1,6 +1,6 @@
 import type { Note } from 'virtual:vault';
-import { type Task, plainTask, DUE_TEXT } from './taskScan';
-import { shortTitle } from './util';
+import { type Task, plainTask, DUE_TEXT } from './taskScan.ts';
+import { shortTitle } from './util.ts';
 import type { Project } from './projects';
 
 // Data for the customer cockpit and its "Brief me" text. Everything is derived from the notes' frontmatter and text, nothing is stored.
@@ -11,6 +11,15 @@ export const withoutCode = (t: string) => t.split(CODE).filter((_, i) => i % 2 =
 
 // a note belongs to a customer by its frontmatter, or by living under projects/<customer>/
 export const ofCustomer = (n: Note, c: string) => n.customer === c || n.path.toLowerCase().startsWith(`projects/${c}/`);
+// which customer a code project belongs to: config "projects.customers" ({"acme": ["acme", "acme-portal"]}) first,
+// else the first word of the customer slug found in the folder or branch name (acme-corp -> "acme")
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+export function projectCustomer(p: { name: string; branch: string }, customers: string[], map: Record<string, string[]>): string {
+  const hay = squash(p.name) + ' ' + squash(p.branch);
+  for (const [c, words] of Object.entries(map)) if (words.some(w => squash(w) && hay.includes(squash(w)))) return c;
+  for (const c of customers) { const w = squash(c.split('-')[0]); if (w.length >= 3 && hay.includes(w)) return c; }
+  return '';
+}
 export const customersOf = (notes: Note[]) => [...new Set(notes.map(n => n.customer).filter(c => /^[a-z0-9][a-z0-9-]*$/.test(c)))].sort();
 
 // Jira-style keys (EAPR-5374). Common non-ticket codes are skipped.

@@ -439,3 +439,32 @@ button.tv-card-title:hover { color:var(--accent); }
 button.link { all:unset; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font:11px var(--mono); color:var(--mute); } button.link:hover { color:var(--accent); }
 .tasks-view .rc-steps { list-style:disc; margin:0; padding-left:18px; }
 .add-task select { max-width:260px; text-overflow:ellipsis; }
+
+/* path finder: the step bar under the map */
+.path-bar { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:14; display:flex; align-items:center; flex-wrap:wrap; justify-content:center; gap:4px 6px; max-width:min(860px, 80vw); padding:7px 8px 7px 16px; border:1px solid var(--line); border-radius:22px; background:var(--panel); box-shadow:0 10px 30px #0000001f; animation:fade .2s ease; }
+.path-bar .pb-label { font:10.5px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); margin-right:4px; }
+.path-bar .pb-step { display:inline-flex; align-items:center; gap:6px; } .path-bar .pb-step i { font-style:normal; color:var(--accent); }
+.path-bar .pb-step button { all:unset; cursor:pointer; padding:3px 10px; border:1px solid var(--line); border-radius:999px; font-size:12.5px; color:var(--ink); transition:background .2s, border-color .2s; }
+.path-bar .pb-step button:hover { border-color:var(--accent); } .path-bar .pb-step button.on { background:var(--accent); border-color:var(--accent); color:var(--bg); }
+.path-bar .pb-x { all:unset; cursor:pointer; width:24px; height:24px; display:grid; place-items:center; border-radius:50%; color:var(--mute); font-size:16px; } .path-bar .pb-x:hover { color:var(--ink); background:var(--soft); }
+
+/* workspace: the customer chip and the "where was I" trail in the active-filter row */
+.ws-chip { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px 8px; }
+.ws-trail { display:inline-flex; align-items:center; flex-wrap:wrap; gap:5px; } .ws-trail small { font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); margin-right:2px; }
+
+/* weekly review */
+.wk-range { font-size:.5em; font-weight:400; color:var(--mute); margin-left:10px; letter-spacing:0; }
+.wk-group .pv-sec-head { gap:12px; } .wk-group .pv-sec-head small { flex:1; }
+.wk-cols { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:6px 28px; }
+.wk-cols h3 { font:10.5px var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--mute); margin:10px 0 4px; font-weight:500; }
+.wk-done { list-style:none; margin:0; padding:0; } .wk-done li { display:flex; gap:10px; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.45; }
+.wk-done li small { flex:none; font:10.5px var(--mono); color:var(--mute); padding-top:2px; }
+
+/* review queue (Today) and the age legend */
+.type-legend .lg-title { color:var(--mute); letter-spacing:.1em; text-transform:uppercase; font-size:10px; }
+.rq-lead { margin:0 0 8px; color:var(--mute); font-size:13px; }
+.rq-list { list-style:none; margin:0; padding:0; } .rq-list li { display:flex; align-items:center; gap:14px; padding:8px 0; border-bottom:1px solid var(--line); }
+.rq-list li.done { opacity:.55; } .rq-list li em { font:11px var(--mono); color:var(--accent); font-style:normal; flex:none; }
+.rq-open { all:unset; cursor:pointer; flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; } .rq-open b { font-weight:600; font-size:14px; } .rq-open:hover b { color:var(--accent); }
+.rq-open span { font-size:12.5px; color:var(--ink); opacity:.8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .rq-open small { font:10.5px var(--mono); color:var(--mute); }
+.rq-acts { display:flex; gap:6px; flex:none; } .rq-acts .btn { padding:5px 11px; font-size:12px; }

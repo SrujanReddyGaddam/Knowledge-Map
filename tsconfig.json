@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022", "lib": ["ES2022", "DOM", "DOM.Iterable"], "module": "ESNext", "moduleResolution": "bundler",
-    "jsx": "react-jsx", "strict": true, "skipLibCheck": true, "noEmit": true, "types": ["vite/client", "node"]
+    "jsx": "react-jsx", "strict": true, "skipLibCheck": true, "noEmit": true, "allowImportingTsExtensions": true, "types": ["vite/client", "node"]
   },
-  "include": ["src", "vault-plugin.ts", "vite.config.ts", "frontmatter.ts", "rename-links.ts", "append-text.ts", "projects.ts"]
+  "include": ["src", "vault-plugin.ts", "vite.config.ts", "frontmatter.ts", "rename-links.ts", "append-text.ts", "projects.ts", "vault-load.ts", "mcp-server.ts"]
 }

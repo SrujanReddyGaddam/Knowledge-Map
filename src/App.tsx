@@ -13,13 +13,18 @@ import { play, tick, VARIANTS, setVolume } from './sound';
 import { PALETTES, applyColors } from './palettes';
 import { buildIndex, runSearch, highlight, type Scope } from './search';
 import { FACETS, facetCounts, facetMatch, typeTints, lintNote, TYPE_GROUPS, type Facet, type FacetSel } from './facets';
+import { ageTints, AGE_BUCKETS } from './review';
 import NewNote from './NewNote';
 import Today from './Today';
 import Cockpit from './Cockpit';
+import Week from './Week';
 import Capture from './Capture';
 import Palette, { type Action } from './Palette';
-import { customersOf } from './cockpitData';
+import { customersOf, ofCustomer, pretty } from './cockpitData';
+import { trailOf, pushTrail, customerOfNote } from './workspace';
 import { dailyNote, dailyPath, dailyVault, ensureDaily } from './journal';
+import { shortestPath } from './graphPath';
+import { contextPack } from './contextPack';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
 // same rules as the server: exact file name first ([[x.excalidraw]] is the drawing), then the name without .excalidraw, where a note beats a drawing
@@ -69,7 +74,8 @@ const customers = customersOf(vault.notes);
 const findNotes = (q: string) => (runSearch(searchIndex, q, 'names')?.hits ?? []).map(h => h.note);
 // a message that should survive the reload that follows our own write (e.g. "Captured")
 const toastAfterReload = (() => { try { const t = sessionStorage.getItem('kmToast'); sessionStorage.removeItem('kmToast'); return t || ''; } catch { return ''; } })();
-type View = 'tasks' | 'today' | 'cockpit' | null;
+type View = 'tasks' | 'today' | 'cockpit' | 'week' | null;
+const VIEWS = ['tasks', 'today', 'cockpit', 'week'];
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
@@ -94,7 +100,9 @@ export default function App() {
     for (const f of FACETS) { const v = (src[f] ?? []).filter(x => facetVals[f].some(([k]) => k === x)); if (v.length) out[f] = v; }
     return out;
   });
-  const [colorBy, setColorBy] = useState<'none' | 'type'>(() => { try { return localStorage.getItem('colorBy') === 'type' ? 'type' : 'none'; } catch { return 'none'; } });
+  // color the map by note type, or by age (how long since anyone looked at the note); the color button cycles through them
+  const [colorBy, setColorBy] = useState<'none' | 'type' | 'age'>(() => { try { const c = localStorage.getItem('colorBy'); return c === 'type' || c === 'age' ? c : 'none'; } catch { return 'none'; } });
+  const cycleColor = () => setColorBy(c => (c === 'none' ? 'type' : c === 'type' ? 'age' : 'none'));
   useEffect(() => { try { localStorage.setItem('colorBy', colorBy); } catch {} }, [colorBy]);
   const [newOpen, setNewOpen] = useState(false);
   // the Browse drawer starts below the search row and the active-filter chips (which wrap and grow), never underneath them
@@ -122,8 +130,8 @@ export default function App() {
   // full-page views over the map (one at a time): Tasks, Today, customer cockpit. ?view=today|tasks|cockpit&customer=x opens one.
   const [view, setView] = useState<View>(() => {
     const p = new URLSearchParams(location.search).get('view');
-    if (p === 'tasks' || p === 'today' || p === 'cockpit') return p;
-    try { const v = localStorage.getItem('view'); return v === 'tasks' || v === 'today' || v === 'cockpit' ? v : localStorage.getItem('tasks') === '1' ? 'tasks' : null; } catch { return null; }
+    if (p && VIEWS.includes(p)) return p as View;
+    try { const v = localStorage.getItem('view'); return v && VIEWS.includes(v) ? v as View : localStorage.getItem('tasks') === '1' ? 'tasks' : null; } catch { return null; }
   });
   useEffect(() => { try { localStorage.setItem('view', view || ''); localStorage.removeItem('tasks'); } catch {} }, [view]);
   const toggleView = useCallback((v: Exclude<View, null>) => setView(cur => (cur === v ? null : v)), []);
@@ -137,9 +145,18 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('cockpitCustomer', customer || ''); } catch {} }, [customer]);
   // one-shot URL params (app shortcuts) are dropped after use so a reload does not repeat them
   useEffect(() => { const u = new URL(location.href); if (['capture', 'view', 'customer'].some(k => u.searchParams.has(k))) { ['capture', 'view', 'customer'].forEach(k => u.searchParams.delete(k)); history.replaceState(null, '', u.toString()); } }, []);
+  // workspace: one customer as the context (key g): the map shows only its notes, the cockpit opens on it, a trail shows where you were
+  const [workspace, setWorkspace] = useState<string | null>(() => { try { const w = localStorage.getItem('workspace'); return w && customers.includes(w) ? w : null; } catch { return null; } });
+  useEffect(() => { try { localStorage.setItem('workspace', workspace || ''); } catch {} }, [workspace]);
+  const [trail, setTrail] = useState<string[]>(() => (workspace ? trailOf(workspace) : []));
+  const workspaceRef = useRef(workspace); workspaceRef.current = workspace;
   const openCockpit = useCallback((c: string | null) => { setCustomer(c && customers.includes(c) ? c : null); setView('cockpit'); }, []);
   const [captureOpen, setCaptureOpen] = useState(() => new URLSearchParams(location.search).get('capture') === '1');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // path finder: shortest link path from the open note to a picked one, drawn on the map with a step bar
+  const [path, setPath] = useState<{ from: string; to: string; ids: string[] } | null>(null);
+  const [pathPick, setPathPick] = useState(false);
+  const [wsPick, setWsPick] = useState(false);
   const [toast, setToast] = useState(toastAfterReload);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 3200); return () => clearTimeout(t); } }, [toast]);
   // Survive the live-reload that follows any vault file change (e.g. deleting a note).
@@ -174,6 +191,17 @@ export default function App() {
     if (id && soundRef.current !== 'off') play(soundRef.current); if (id && focusModeRef.current) setFocus({ id, hops: hopsRef.current }); setSelected(id); history.replaceState(null, '', id ? '#' + encodeURIComponent(id) : location.pathname); }, [endEdit]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch {} }, [dark]);
 
+  // every opened note of a customer goes on that customer's trail
+  useEffect(() => { const n = selected ? byId.get(selected) : null, c = n ? customerOfNote(n, customers) : ''; if (c) { const t = pushTrail(c, n!.id); if (c === workspaceRef.current) setTrail(t); } }, [selected]);
+  const enterWorkspace = (c: string) => {
+    setWorkspace(c); setCustomer(c); setSection(null); setFocus(null); setView(v => (v === 'cockpit' ? v : null));   // the map is the workspace
+    const t = trailOf(c).filter(id => byId.has(id)); setTrail(t);
+    const hub = vault.notes.find(n => n.type === 'hub' && n.customer === c && !n.project) ?? vault.notes.find(n => n.type === 'hub' && ofCustomer(n, c));
+    const open = t[0] ?? hub?.id;
+    if (open) select(open);
+    setToast(`Workspace: ${pretty(c)}`);
+  };
+  const leaveWorkspace = () => { setWorkspace(null); setTrail([]); };
   const q = query.trim();
   const res = useMemo(() => runSearch(searchIndex, query, scope), [query, scope]);
   // local graph: the focused note plus everything within N link hops (either direction)
@@ -189,21 +217,21 @@ export default function App() {
   }, [focus]);
   const matches = useMemo(() => {
     const anyFacet = FACETS.some(f => facets[f]?.length);
-    if (!res && !section && !tags.length && !vaultSel.length && !focusSet && !anyFacet) return null;
+    if (!res && !section && !tags.length && !vaultSel.length && !focusSet && !anyFacet && !workspace) return null;
     const textOk = res ? new Set(res.hits.map(h => h.note.id)) : null;
     const set = new Set<string>();
     for (const n of vault.notes) {
-      if ((!textOk || textOk.has(n.id)) && (!vaultSel.length || vaultSel.includes(n.vault)) && (!section || n.section === section) && (!focusSet || focusSet.has(n.id)) && tags.every(t => n.tags.includes(t)) && (!anyFacet || facetMatch(n, facets))) set.add(n.id);
+      if ((!textOk || textOk.has(n.id)) && (!vaultSel.length || vaultSel.includes(n.vault)) && (!section || n.section === section) && (!workspace || ofCustomer(n, workspace)) && (!focusSet || focusSet.has(n.id)) && tags.every(t => n.tags.includes(t)) && (!anyFacet || facetMatch(n, facets))) set.add(n.id);
     }
     return set;
-  }, [res, section, tags, vaultSel, focusSet, facets]);
+  }, [res, section, tags, vaultSel, focusSet, facets, workspace]);
   const hits = useMemo(() => (res && matches ? res.hits.filter(h => matches.has(h.note.id)) : []), [res, matches]);
   useEffect(() => setCursor(0), [query, scope]);
   const facetCount = FACETS.reduce((a, f) => a + (facets[f]?.length || 0), 0);
   const filterCount = (section ? 1 : 0) + vaultSel.length + tags.length + (focus ? 1 : 0) + facetCount;
   const clearFilters = () => { setSection(null); setTags([]); setVaultSel([]); setFocus(null); setFacets({}); };
   const toggleFacet = (f: Facet, v: string) => setFacets(fs => { const cur = fs[f] ?? [], nx = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]; const o = { ...fs }; if (nx.length) o[f] = nx; else delete o[f]; return o; });
-  const tints = useMemo(() => (colorBy === 'type' ? typeTints(vault.notes, dark) : null), [colorBy, dark]);
+  const tints = useMemo(() => (colorBy === 'type' ? typeTints(vault.notes, dark) : colorBy === 'age' ? ageTints(vault.notes, dark) : null), [colorBy, dark]);
   const toggleTag = (t: string) => setTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
 
   // Hide mode keeps the open note visible even if it does not match; prev/next skip hidden notes
@@ -221,6 +249,15 @@ export default function App() {
     } catch (e) { return String(e); }
   }, []);
   const note = selected ? byId.get(selected)! : null;
+  // leaving the path (closing the note, or opening one that is not on it) clears it
+  useEffect(() => { if (path && (!selected || !path.ids.includes(selected))) setPath(null); }, [selected, path]);
+  const findPath = (from: string, to: string) => {
+    if (from === to) return;
+    const ids = shortestPath(vault.notes, from, to);
+    if (ids) { setPath({ from, to, ids }); setView(null); }   // the path is drawn on the map, so a full-page view would hide it
+    else setToast(`No link path between ${shortTitle(byId.get(from)!.title)} and ${shortTitle(byId.get(to)!.title)}.`);
+  };
+  const pathIds = path?.ids ?? null;
   const selNote = note;
   // opening a note marks its current version as seen
   useEffect(() => { if (note && changed.has(note.id)) setSeenState(s => ({ ...s, seen: { ...s.seen, [note.id]: note.mtime } })); }, [note, changed]);
@@ -247,8 +284,11 @@ export default function App() {
   };
   const actions: Action[] = [
     { id: 'today', label: 'Today', hint: 'due tasks, where you left off, captures', keys: 'h', run: () => setView('today') },
+    { id: 'week', label: 'Weekly review', hint: 'this week per customer, copy as markdown', keys: 'w', run: () => setView('week') },
     { id: 'tasks', label: 'Tasks', hint: 'every open checkbox', keys: 't', run: () => setView('tasks') },
     { id: 'cockpit', label: 'Customer cockpit', hint: 'pick a customer', keys: 'k', run: () => openCockpit(null) },
+    ...customers.map(c => ({ id: 'ws-' + c, label: 'Workspace: ' + pretty(c), hint: 'this customer as the context', run: () => enterWorkspace(c) })),
+    ...(workspace ? [{ id: 'ws-leave', label: 'Leave workspace', hint: pretty(workspace), keys: 'g', run: leaveWorkspace }] : []),
     ...customers.map(c => ({ id: 'ck-' + c, label: 'Cockpit: ' + c.replace(/-/g, ' '), hint: 'customer', run: () => openCockpit(c) })),
     ...(dailyVault() && !safeMode ? [{ id: 'capture', label: 'Quick capture', hint: 'into the inbox', keys: 'c', run: () => setCaptureOpen(true) }] : []),
     ...(dailyVault() ? [{ id: 'daily', label: "Today's journal", hint: 'open or create the daily note', keys: 'd', run: openDaily }] : []),
@@ -258,6 +298,8 @@ export default function App() {
     ...(selNote ? [
       ...(selNote.writable && selNote.kind !== 'drawing' ? [{ id: 'edit', label: 'Edit this note', hint: shortTitle(selNote.title), keys: 'e', run: () => setEditId(selNote.id) }] : []),
       { id: 'focus', label: 'Focus on this note', hint: 'show its neighbours only', run: () => setFocus({ id: selNote.id, hops: hopsRef.current }) },
+      { id: 'claude', label: 'Hand to Claude', hint: 'copy a context pack for Claude Code', run: () => navigator.clipboard.writeText(contextPack(vault.notes, selNote.id, vault.jiraBase)).then(() => setToast('Context pack copied. Paste it into Claude Code.')) },
+      { id: 'path', label: 'Find path from this note', hint: 'how it connects to another note', keys: 'p', run: () => setPathPick(true) },
       { id: 'close', label: 'Close the note', keys: 'esc', run: () => select(null) },
     ] : []),
     { id: 'focusmode', label: focusMode ? 'Leave focus mode' : 'Focus mode', hint: 'every pick becomes the focus', run: () => { if (focusMode) { setFocusMode(false); setFocus(null); } else setFocusMode(true); } },
@@ -265,6 +307,7 @@ export default function App() {
     { id: 'safe', label: safeMode ? 'Leave Safe mode' : 'Safe mode', hint: 'for screen sharing', run: () => setSafeMode(!safeMode) },
     { id: 'theme', label: dark ? 'Light theme' : 'Dark theme', run: () => setDark(d => !d) },
     { id: 'color', label: colorBy === 'type' ? 'Stop coloring by type' : 'Color notes by type', run: () => setColorBy(c => (c === 'type' ? 'none' : 'type')) },
+    { id: 'age', label: colorBy === 'age' ? 'Stop coloring by age' : 'Color notes by age', hint: 'how long since a note was last looked at', run: () => setColorBy(c => (c === 'age' ? 'none' : 'age')) },
     ...Object.entries(PALETTES).map(([k, p]) => ({ id: 'pal-' + k, label: 'Palette: ' + p.name, run: () => setPalette(k) })),
     { id: 'seen', label: 'Mark all notes seen', run: markAllSeen },
   ];
@@ -281,10 +324,13 @@ export default function App() {
       else if (e.metaKey || e.ctrlKey || e.altKey) return;
       else if (e.key === 't') toggleView('tasks');
       else if (e.key === 'h') toggleView('today');
-      else if (e.key === 'k') { if (tasksRef.current === 'cockpit') setView(null); else openCockpit(selNote?.customer || customer); }
+      else if (e.key === 'w') toggleView('week');
+      else if (e.key === 'k') { if (tasksRef.current === 'cockpit') setView(null); else openCockpit(workspaceRef.current || selNote?.customer || customer); }
+      else if (e.key === 'g' && customers.length) { e.preventDefault(); if (workspaceRef.current) leaveWorkspace(); else setWsPick(true); }
       else if (e.key === 'c' && dailyVault() && !editIdRef.current && !safeMode) { e.preventDefault(); setCaptureOpen(true); }
       else if (e.key === 'd' && dailyVault() && !editIdRef.current) { e.preventDefault(); openDaily(); }
       else if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && vault.writableVaults.length && !editIdRef.current) { e.preventDefault(); setNewOpen(true); }
+      else if (e.key === 'p' && selNote) { e.preventDefault(); setPathPick(true); }
       else if (e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey && selNote?.writable && selNote.kind !== 'drawing') { e.preventDefault(); setEditId(selNote.id); }
       else if (e.key === 'ArrowRight' && next) select(next.id);
       else if (e.key === 'ArrowLeft' && prev) select(prev.id);
@@ -310,7 +356,7 @@ export default function App() {
 
   return (
     <>
-      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} markIds={hl && changed.size ? changed : null} tints={tints} hide={hide} intro={introOn} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
+      <Graph notes={vault.notes} edges={vault.edges} selectedId={selected} panelWidth={panelW} colors={colors} matchIds={graphMatches} path={pathIds} markIds={hl && changed.size ? changed : null} tints={tints} hide={hide} intro={introOn} onSelect={select} onHover={id => { if (id && soundRef.current !== 'off') tick(); }} />
       <div className="search-wrap">
         <div ref={headRef}>
         <div className="search-row">
@@ -345,6 +391,9 @@ export default function App() {
         </div>
         {matches && (
           <div className="active-filters">
+            {workspace && <span className="ws-chip"><button className="chip active" onClick={leaveWorkspace} title="Leave the workspace  (g)">Workspace: {pretty(workspace)} &times;</button>
+              <button className="link" onClick={() => openCockpit(workspace)}>cockpit</button>
+              {trail.filter(id => id !== selected && byId.has(id)).length > 0 && <span className="ws-trail"><small>Where was I</small>{trail.filter(id => id !== selected && byId.has(id)).slice(0, 5).map(id => <button key={id} className="chip tag" onClick={() => select(id)} title={byId.get(id)!.summary}>{shortTitle(byId.get(id)!.title)}</button>)}</span>}</span>}
             {focus && byId.get(focus.id) && <span className="focus-chip"><button className="chip active" onClick={() => { setFocus(null); setFocusMode(false); }} title="Clear focus">Focus: {shortTitle(byId.get(focus.id)!.title)} &times;</button>
               <span className="seg" role="group" aria-label="Hops"><button className={focus.hops === 1 ? 'on' : ''} onClick={() => setFocus({ ...focus, hops: 1 })}>1 hop</button><button className={focus.hops === 2 ? 'on' : ''} onClick={() => setFocus({ ...focus, hops: 2 })}>2 hops</button></span></span>}
             {vaultSel.map(v => <button key={v} className="chip active" onClick={() => setVaultSel(vaultSel.filter(x => x !== v))}>{v} &times;</button>)}
@@ -406,7 +455,8 @@ export default function App() {
         {changed.size > 0 && <> &middot; <button onClick={() => { try { localStorage.setItem('browseTab', 'new'); } catch {} setBrowseKey(k => k + 1); setBrowse(true); setIntroMsg(false); }}>{changed.size} updated since you last looked</button></>}
       </div>}
  {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
- {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} />}
+ {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} />}
+ {view === 'week' && <Week right={panelW} notes={vault.notes} customers={customers} selected={selected} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} />}
  {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} onCustomer={setCustomer} onSelect={select} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
@@ -416,7 +466,7 @@ export default function App() {
             <div className="eyebrow">Knowledge map</div>
             <p><b>{vault.vaults.join(' + ')}</b><br />{vault.notes.length} notes, {vault.edges.length} links{vault.broken.length ? `, ${vault.broken.length} broken wikilinks` : ''}{safeMode ? `. Safe mode: ${vault.hiddenCount} notes hidden` : ''}</p>
             <div className="eyebrow">Controls</div>
-            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>&#8984;K</kbd> commands &nbsp; <kbd>/</kbd> search &nbsp; <kbd>h</kbd> today &nbsp; <kbd>k</kbd> cockpit &nbsp; <kbd>t</kbd> tasks &nbsp; <kbd>c</kbd> capture &nbsp; <kbd>d</kbd> journal &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
+            <p className="keys"><kbd>drag</kbd> rotate &nbsp; <kbd>shift</kbd>+<kbd>drag</kbd> pan &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>click</kbd> open<br /><kbd>&#8984;K</kbd> commands &nbsp; <kbd>/</kbd> search &nbsp; <kbd>h</kbd> today &nbsp; <kbd>w</kbd> week &nbsp; <kbd>k</kbd> cockpit &nbsp; <kbd>g</kbd> workspace &nbsp; <kbd>p</kbd> path &nbsp; <kbd>t</kbd> tasks &nbsp; <kbd>c</kbd> capture &nbsp; <kbd>d</kbd> journal &nbsp; <kbd>n</kbd> new note &nbsp; <kbd>b</kbd> browse &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> prev / next &nbsp; <kbd>esc</kbd> close / leave focus mode</p>
           </div>
         )}
       </div>
@@ -434,8 +484,8 @@ export default function App() {
           onClick={() => setSafeMode(!safeMode)}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><path d="M8 1.5l5.5 2v4.2c0 3.2-2.3 5.6-5.5 6.8-3.2-1.2-5.5-3.6-5.5-6.8V3.5z" />{safeMode && <path d="M5.5 8l1.8 1.8 3.3-3.6" strokeLinecap="round" />}</svg>
         </button>
-        <button className={'icon-btn' + (colorBy === 'type' ? ' on' : '')} aria-pressed={colorBy === 'type'} aria-label="Color by type" title={colorBy === 'type' ? 'Coloring notes by type. Click to turn off' : 'Color notes by type'}
-          onClick={() => setColorBy(c => (c === 'type' ? 'none' : 'type'))}>
+        <button className={'icon-btn' + (colorBy !== 'none' ? ' on' : '')} aria-pressed={colorBy !== 'none'} aria-label="Color notes" title={colorBy === 'type' ? 'Coloring notes by type. Click to color by age' : colorBy === 'age' ? 'Coloring notes by age (last looked at). Click to turn off' : 'Color notes by type (click again for age)'}
+          onClick={cycleColor}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="5" cy="5.5" r="2.6" /><circle cx="11" cy="5.5" r="2.6" /><circle cx="8" cy="11" r="2.6" /></svg>
         </button>
         <button className={'icon-btn' + (focusMode ? ' on' : '')} aria-pressed={focusMode} aria-label="Focus mode" title={focusMode ? 'Focus mode on: every note you pick becomes the focus. Esc to leave' : 'Focus mode: every note you pick becomes the focus until Esc'}
@@ -467,14 +517,25 @@ export default function App() {
         {TYPE_GROUPS.map(g => <span key={g.key} title={g.types.join(', ')}><i className="type-dot" style={{ background: dark ? g.dark : g.light }} />{g.label}</span>)}
         <span title="every other type, or no type"><i className="type-dot neutral" />Other</span>
       </div>}
+      {colorBy === 'age' && <div className="type-legend" style={{ right: panelW + 20 }} aria-label="Age legend">
+        <span className="lg-title">Last looked at</span>
+        {AGE_BUCKETS.map(b => <span key={b.label}><i className={'type-dot' + (b.light ? '' : ' neutral')} style={b.light ? { background: dark ? b.dark : b.light } : undefined} />{b.label}</span>)}
+      </div>}
       {safeMode && <button className="safe-badge" onClick={() => setSafeMode(false)} title="Click to leave safe mode">Safe mode: {vault.hiddenCount} notes hidden</button>}
       {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} />}
       {captureOpen && !safeMode && dailyVault() && <Capture vaults={vault.writableVaults} onClose={() => setCaptureOpen(false)}
         onDone={(v, p) => { const m = `Captured to ${v}: ${p}`; try { sessionStorage.setItem('kmToast', m); } catch {} setCaptureOpen(false); setToast(m); }} />}
       {paletteOpen && <Palette actions={actions} findNotes={findNotes} onOpen={id => select(id)} onClose={() => setPaletteOpen(false)} />}
+      {wsPick && <Palette actions={actions.filter(a => a.id.startsWith('ws-'))} findNotes={() => []} onOpen={() => {}} onClose={() => setWsPick(false)} placeholder="Workspace: pick a customer" />}
+      {pathPick && selNote && <Palette actions={[]} findNotes={q => findNotes(q).filter(n => n.id !== selNote.id)} onOpen={id => findPath(selNote.id, id)} onClose={() => setPathPick(false)} placeholder={`Path from ${shortTitle(selNote.title)} to...`} />}
+      {path && <div className="path-bar" style={{ marginLeft: -panelW / 2, bottom: colorBy !== 'none' ? 112 : 72 }} role="navigation" aria-label="Link path">
+        <span className="pb-label">Path · {path.ids.length - 1} {path.ids.length === 2 ? 'hop' : 'hops'}</span>
+        {path.ids.map((id, i) => <span key={id} className="pb-step">{i > 0 && <i aria-hidden="true">&rarr;</i>}<button className={id === selected ? 'on' : ''} onClick={() => select(id)} title={byId.get(id)!.summary}>{shortTitle(byId.get(id)!.title)}</button></span>)}
+        <button className="pb-x" onClick={() => setPath(null)} aria-label="Clear path" title="Clear path">&times;</button>
+      </div>}
       {toast && <div className="toast" role="status">{toast}</div>}
       <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
-        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={(f, v) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); }} onCockpit={c => openCockpit(c)} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
+        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={(f, v) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); }} onCockpit={c => openCockpit(c)} onPath={() => setPathPick(true)} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
     </>
   );
 }

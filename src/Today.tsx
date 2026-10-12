@@ -7,15 +7,17 @@ import AddTask from './AddTask';
 import ResumeCard from './ResumeCard';
 import { useProjects, projectsOn, customerOf } from './projects';
 import { day, dailyNote, dailyVault } from './journal';
+import ReviewQueue from './ReviewQueue';
+import vault from './data';
 
 // Today view (key h): what needs doing today, where each code project was left off, and what was captured or edited today.
 type Props = {
   right: number; notes: Note[]; tasks: Task[]; current: Note | null; customers: string[]; canTick: boolean;
-  onSelect: (id: string) => void; onClose: () => void; onCockpit: (c: string) => void; onCapture: () => void; onDaily: () => void;
+  onSelect: (id: string) => void; onClose: () => void; onCockpit: (c: string) => void; onCapture: () => void; onDaily: () => void; onWeek: () => void;
 };
 const OLD = 30 * 864e5;
 
-export default function Today({ right, notes, tasks, current, customers, canTick, onSelect, onClose, onCockpit, onCapture, onDaily }: Props) {
+export default function Today({ right, notes, tasks, current, customers, canTick, onSelect, onClose, onCockpit, onCapture, onDaily, onWeek }: Props) {
   const a = useTaskActions();
   const { list, err, refresh } = useProjects();
   const [older, setOlder] = useState(false);
@@ -44,6 +46,7 @@ export default function Today({ right, notes, tasks, current, customers, canTick
         <div className="pv-actions">
           {dailyVault() && <button className="btn primary" onClick={onDaily} title="Open today's journal note  (d)">{daily ? "Open today's journal" : "Start today's journal"}</button>}
           {dailyVault() && <button className="btn" onClick={onCapture} title="Quick capture into the inbox  (c)">Quick capture</button>}
+          <button className="btn" onClick={onWeek} title="This week per customer  (w)">Weekly review</button>
         </div>
 
         <section className="pv-sec">
@@ -64,6 +67,8 @@ export default function Today({ right, notes, tasks, current, customers, canTick
           {stale.length > 0 && <button className="link pv-more" onClick={() => setOlder(v => !v)}>{older ? 'Hide' : 'Show'} {stale.length} idle for 30+ days</button>}
           {older && <div className="rc-grid">{stale.map(p => <ResumeCard key={p.path} p={p} customer={customerOf(p, customers)} onCustomer={onCockpit} />)}</div>}
         </section>}
+
+        <ReviewQueue notes={notes} lintVaults={vault.lintVaults} canWrite={canTick} onSelect={onSelect} />
 
         <div className="pv-two">
           <section className="pv-sec">

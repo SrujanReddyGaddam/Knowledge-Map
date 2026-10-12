@@ -4,7 +4,7 @@ import { shortTitle } from './util';
 
 // Command palette (Cmd+K): every action plus note names. Arrows move, Enter runs, Esc closes.
 export type Action = { id: string; label: string; hint?: string; keys?: string; run: () => void };
-type Props = { actions: Action[]; findNotes: (q: string) => Note[]; onOpen: (id: string) => void; onClose: () => void };
+type Props = { actions: Action[]; findNotes: (q: string) => Note[]; onOpen: (id: string) => void; onClose: () => void; placeholder?: string; initial?: string };
 
 const score = (q: string, t: string) => {
   const s = t.toLowerCase();
@@ -16,8 +16,8 @@ const score = (q: string, t: string) => {
   return 0;
 };
 
-export default function Palette({ actions, findNotes, onOpen, onClose }: Props) {
-  const [q, setQ] = useState('');
+export default function Palette({ actions, findNotes, onOpen, onClose, placeholder, initial }: Props) {
+  const [q, setQ] = useState(initial ?? '');
   const [cur, setCur] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const items = useMemo(() => {
@@ -34,7 +34,7 @@ export default function Palette({ actions, findNotes, onOpen, onClose }: Props) 
   return (
     <div className="modal-back pal-back" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="palette" role="dialog" aria-label="Command palette">
-        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Type a command or a note name" spellCheck={false} aria-label="Command"
+        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={placeholder ?? "Type a command or a note name"} spellCheck={false} aria-label="Command"
           onKeyDown={e => {
             if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); onClose(); }
             else if (e.key === 'ArrowDown') { e.preventDefault(); setCur(c => Math.min(items.length - 1, c + 1)); }
@@ -49,7 +49,7 @@ export default function Palette({ actions, findNotes, onOpen, onClose }: Props) 
               <span>{it.label}{it.sub && <small>{it.sub}</small>}</span>{it.keys && <kbd>{it.keys}</kbd>}
             </button>
           </div>)}
-          {!items.length && <div className="pal-empty">Nothing matches.</div>}
+          {!items.length && <div className="pal-empty">{q.trim() || actions.length ? 'Nothing matches.' : 'Type a note name.'}</div>}
         </div>
       </div>
     </div>
