@@ -93,7 +93,14 @@ export default function Graph(props: Props) {
       m.renderOrder = 2; m.visible = false; m.frustumCulled = false; return m;
     };
     const hoverRing = mkRing(), selRing = mkRing();
-    scene.add(lines, dots, discs, hoverRing, selRing);
+    // path finder pulse: a bright head with a fading tail that travels the path from the first note to the last, then loops
+    const PULSE = 14, qp = new Float32Array(PULSE * 3).fill(1e7), qc = new Float32Array(PULSE * 3);
+    const qg = new THREE.BufferGeometry();
+    qg.setAttribute('position', new THREE.BufferAttribute(qp, 3).setUsage(THREE.DynamicDrawUsage));
+    qg.setAttribute('color', new THREE.BufferAttribute(qc, 3).setUsage(THREE.DynamicDrawUsage));
+    const pulse = new THREE.Points(qg, new THREE.PointsMaterial({ size: 9 * Math.min(devicePixelRatio || 1, 2), map: dotTex, vertexColors: true, sizeAttenuation: false, transparent: false, alphaTest: 0.35, depthTest: false, depthWrite: false }));
+    pulse.frustumCulled = false; pulse.renderOrder = 3;
+    scene.add(lines, dots, discs, hoverRing, selRing, pulse);
 
     // labels (DOM overlay, positioned from projected node centres)
     const layer = document.createElement('div'); layer.className = 'labels'; host.appendChild(layer);
@@ -142,7 +149,15 @@ export default function Graph(props: Props) {
 
     let lastPanel = live.current.panelWidth, lastSig = '';
     // path finder: the notes on the path stay lit, the rest dims, and its links light up one after another (edge index -> order)
-    let pth: { nodes: Set<string>; edges: Map<string, number>; t0: number } | null = null;
+    type Link = typeof links[number];
+    let pth: { nodes: Set<string>; edges: Map<string, number>; legs: { l: Link; rev: boolean }[]; t0: number } | null = null;
+    const LEGS_PER_S = 1.3, PAUSE = 0.9;   // pulse speed (links per second) and the rest at the target before it starts again
+    // a point on a link's drawn curve (same bow as the edge lines below), t from source to target
+    const onLink = (l: Link, t: number, out: number[]) => {
+      const A = l.source.p, B = l.target.p, dx = B[0] - A[0], dy = B[1] - A[1], flat = Math.hypot(dx, dy) || 1, bow = 0.13 * Math.hypot(dx, dy, B[2] - A[2]);
+      const mx = (A[0] + B[0]) / 2 - (dy / flat) * bow, my = (A[1] + B[1]) / 2 + (dx / flat) * bow, mz = (A[2] + B[2]) / 2, u = 1 - t;
+      out[0] = u * u * A[0] + 2 * u * t * mx + t * t * B[0]; out[1] = u * u * A[1] + 2 * u * t * my + t * t * B[1]; out[2] = u * u * A[2] + 2 * u * t * mz + t * t * B[2];
+    };
     const defaultDist = () => Math.max(700, DEFAULT_DIST * (0.55 + 0.45 * shell.tgt));
     api.current = {
       // Hide mode: non-matching nodes leave the simulation and fade out; the rest regroup into a smaller sphere
@@ -178,7 +193,9 @@ export default function Graph(props: Props) {
       panel: w => { const big = Math.abs(w - lastPanel) > 160; lastPanel = w; gsap.killTweensOf(cam, 'off'); gsap.to(cam, { off: w / 2, duration: big ? 0.9 : 0.18, ease: big ? 'power3.out' : 'none' }); },
       path: ids => {
         if (!ids || ids.length < 2) { pth = null; return; }
-        pth = { nodes: new Set(ids), edges: new Map(ids.slice(1).map((id, i) => [[ids[i], id].sort().join('\u0000'), i])), t0: performance.now() };
+        const byKey = new Map(links.map(l => [l.k, l]));
+        const legs = ids.slice(1).map((id, i) => ({ l: byKey.get([ids[i], id].sort().join('\u0000'))!, rev: false, from: ids[i] })).filter(x => x.l).map(x => ({ l: x.l, rev: x.l.source.id !== x.from }));
+        pth = { nodes: new Set(ids), edges: new Map(ids.slice(1).map((id, i) => [[ids[i], id].sort().join('\u0000'), i])), legs, t0: performance.now() };
         if (intro.on) return;
         // turn the ball so the middle of the path faces the camera, and back off far enough to see all of it
         const ps = ids.map(id => byId.get(id)!).filter(Boolean), c = [0, 0, 0];
@@ -191,8 +208,8 @@ export default function Graph(props: Props) {
         gsap.to(cam, { target: clamp(Math.hypot(...c) + spread * 2.4 + 420, 620, 1900), tx: 0, ty: 0, duration: 1.3, ease: 'power3.inOut' });
       },
       focus: id => {
-        if (intro.on) { intro.pending = id; return; }
-        if (pth && id && pth.nodes.has(id)) return;   // stepping along a path keeps the whole path in view   // land on the note once the intro has settled
+        if (intro.on) { intro.pending = id; return; }   // land on the note once the intro has settled
+        if (pth && id && pth.nodes.has(id)) return;   // stepping along a path keeps the whole path in view
         tween?.kill();
         if (!id) { if (restored) { restored = false; return; } tween = gsap.to(cam, { target: defaultDist(), tx: 0, ty: 0, duration: 1.2, ease: 'power2.inOut' }); idleSince = performance.now(); return; }
         restored = false;
@@ -352,7 +369,8 @@ export default function Graph(props: Props) {
       const hotId = pth ? hover : focus, quiet = !!focus || !!pth, pathAge = pth ? (now - pth.t0) / 1000 : 0;
       links.forEach((l, i) => {
         const ls = l.source, lt = l.target, step = pth?.edges.get(l.k);
-        const hot = (step !== undefined && pathAge * 2.8 > step + 0.4) || (!!hotId && (ls.id === hotId || lt.id === hotId));
+        // a path link lights up once the pulse has first passed it
+        const hot = (step !== undefined && pathAge * LEGS_PER_S > step) || (!!hotId && (ls.id === hotId || lt.id === hotId));
         const A = ls.p, B = lt.p, dx = B[0] - A[0], dy = B[1] - A[1], flat = Math.hypot(dx, dy) || 1, bow = 0.13 * Math.hypot(dx, dy, B[2] - A[2]);
         const mx = (A[0] + B[0]) / 2 - (dy / flat) * bow, my = (A[1] + B[1]) / 2 + (dx / flat) * bow, mz = (A[2] + B[2]) / 2;
         const curve = (t: number) => { const u = 1 - t; tmpP[0] = u * u * A[0] + 2 * u * t * mx + t * t * B[0]; tmpP[1] = u * u * A[1] + 2 * u * t * my + t * t * B[1]; tmpP[2] = u * u * A[2] + 2 * u * t * mz + t * t * B[2]; };
@@ -375,6 +393,17 @@ export default function Graph(props: Props) {
         }
       });
       lg.attributes.position.needsUpdate = true; lg.attributes.color.needsUpdate = true;
+      if (pth && pth.legs.length) {
+        const n = pth.legs.length, at = (pathAge % (n / LEGS_PER_S + PAUSE)) * LEGS_PER_S;
+        for (let j = 0; j < PULSE; j++) {
+          const tj = at - j * 0.035;
+          if (tj < 0 || tj >= n) { qp[j * 3] = qp[j * 3 + 1] = qp[j * 3 + 2] = 1e7; continue; }
+          const leg = pth.legs[Math.floor(tj)], u = tj - Math.floor(tj);
+          onLink(leg.l, leg.rev ? 1 - u : u, tmpP); qp[j * 3] = tmpP[0]; qp[j * 3 + 1] = tmpP[1]; qp[j * 3 + 2] = tmpP[2];
+          tmp.copy(bg).lerp(accent, Math.pow(1 - j / PULSE, 1.6)); qc[j * 3] = tmp.r; qc[j * 3 + 1] = tmp.g; qc[j * 3 + 2] = tmp.b;
+        }
+      } else qp.fill(1e7);
+      qg.attributes.position.needsUpdate = true; qg.attributes.color.needsUpdate = true;
       (dots.material as THREE.PointsMaterial).size = 3.4 * Math.min(devicePixelRatio || 1, 2) * clamp(zoomK * 1.1, 0.45, 1.1);
       pg.attributes.position.needsUpdate = true; pg.attributes.color.needsUpdate = true;
 
