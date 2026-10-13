@@ -9,7 +9,9 @@ import ResumeCard from './ResumeCard';
 import Crumbs, { crumbsFor } from './Crumbs';
 import type { Facet } from './facets';
 import { useProjects, projectsOn, customerOf } from './projects';
-import { cockpitData, briefText, weeklyPrompt, ticketFor, pretty, ofCustomer, type Scope } from './cockpitData';
+import { cockpitData, briefText, weeklyPrompt, ticketFor, pretty, ofCustomer, decisionsIn, type Scope } from './cockpitData';
+import { plainTask, DUE_TEXT } from './taskScan';
+import { useActivity, realTime } from './activity';
 
 // Customer cockpit (key k): one page per customer with everything open or new, so a call can start from a 30 second recap.
 type Props = {
@@ -18,6 +20,7 @@ type Props = {
   onCustomer: (c: string | null) => void; onSelect: (id: string) => void; onFacet: (f: Facet, v: string) => void; onClose: () => void;
 };
 const ago = (ms: number) => {
+  if (!ms) return 'no dated activity';
   const d = Math.floor((Date.now() - ms) / 864e5);
   return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 30 ? d + ' days ago' : d < 365 ? Math.round(d / 30) + ' mo ago' : Math.round(d / 365) + ' y ago';
 };
@@ -25,11 +28,12 @@ const ago = (ms: number) => {
 export default function Cockpit({ customer, customers, right, notes, tasks, changed, canTick, selected, scope, onScope, onCustomer, onSelect, onFacet, onClose }: Props) {
   const a = useTaskActions();
   const { list } = useProjects();
+  const act = useActivity();
   const [brief, setBrief] = useState(false);
   const [copied, setCopied] = useState('');
   const copy = (what: string, text: string) => navigator.clipboard.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(''), 1600); });
   const code = useMemo(() => (customer && list ? list.filter(p => customerOf(p, customers) === customer) : []), [customer, list, customers]);
-  const d = useMemo(() => (customer ? cockpitData(customer, notes, tasks, changed, code, scope) : null), [customer, notes, tasks, changed, code, scope]);
+  const d = useMemo(() => (customer ? cockpitData(customer, notes, tasks, changed, code, scope, act) : null), [customer, notes, tasks, changed, code, scope, act]);
   const crumbs = useMemo(() => (customer ? crumbsFor(notes, { customer, ...scope }) : []), [customer, notes, scope]);
   const scopeLabel = crumbs.map(c => c.label).join(' > ');
   const text = useMemo(() => (customer && d && brief ? briefText(customer, d, vault.jiraBase, scopeLabel) : ''), [customer, d, brief, scopeLabel]);
@@ -82,17 +86,32 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
           <div className="pv-sec-head"><h2>Projects</h2><small>{d.projects.length}</small>{scoped && <button className="link" onClick={() => onScope({})}>show all of {crumbs[0].label}</button>}</div>
           <div className="ck-cards">{d.projects.map(p => {
             const on = scope.project === p.project, name = nameOf(p.project);
-            return <div key={p.project} className={'ck-card' + (on ? ' on' : '')}>
-              <button className="ck-card-main" onClick={() => onScope(on && !scope.component ? {} : { project: p.project })} aria-pressed={on} title={on && !scope.component ? 'Back to the whole customer' : `Scope the cockpit to ${name}`}>
-                <span className="ck-card-head"><b>{name}</b>{p.status && <span className={'ck-status s-' + p.status}>{p.status.replace(/-/g, ' ')}</span>}</span>
-                <span className="ck-facts"><span>{p.count} notes</span><span>{p.tasks} open {p.tasks === 1 ? 'task' : 'tasks'}</span><span>active {ago(p.mtime)}</span></span>
-                <span className="ck-meet">{p.meeting ? <>Latest meeting: {shortTitle(p.meeting.title)} <small>{d.dateOf(p.meeting)}</small></> : 'No meeting notes'}</span>
-              </button>
+            const toggle = () => onScope(on && !scope.component ? {} : { project: p.project });
+            const open = (id: string) => (e: React.MouseEvent) => { e.stopPropagation(); onSelect(id); };
+            const txt = (t: { text: string }) => plainTask(t.text).replace(DUE_TEXT, '').trim();
+            const dec = p.meeting ? decisionsIn(p.meeting).slice(0, 2) : [];
+            return <div key={p.project} className={'ck-card' + (on ? ' on' : '')} role="button" tabIndex={0} aria-pressed={on} onClick={toggle}
+              onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); toggle(); } }}
+              title={on && !scope.component ? 'Back to the whole customer' : `Scope the cockpit to ${name}`}>
+              <div className="ck-card-head"><b>{name}</b>{p.status && <span className={'ck-status s-' + p.status}>{p.status.replace(/-/g, ' ')}</span>}</div>
+              <dl className="ck-rows">
+                <dt>Next step</dt>
+                <dd>{p.next ? <button className="ck-row" onClick={open(p.next.note.id)}>{txt(p.next)}{p.next.due && <small className="ck-due">due {p.next.due}</small>}<small>{shortTitle(p.next.note.title)}</small></button> : <span className="ck-none">No open tasks</span>}</dd>
+                {(p.waiting.length > 0 || p.questions > 0) && <><dt>Waiting on</dt>
+                <dd>{p.waiting[0] ? <button className="ck-row" onClick={open(p.waiting[0].note.id)}>{txt(p.waiting[0])}<small>{[p.waiting.length > 1 && `+${p.waiting.length - 1} more`, p.questions > 0 && `${p.questions} open ${p.questions === 1 ? 'question' : 'questions'}`].filter(Boolean).join(' · ')}</small></button>
+                  : <span className="ck-none">{p.questions} open {p.questions === 1 ? 'question' : 'questions'}</span>}</dd></>}
+                <dt>Last worked on</dt>
+                <dd>{p.worked ? <button className="ck-row" onClick={open(p.worked.id)}>{shortTitle(p.worked.title)}<small>{ago(p.mtime)}</small></button> : <span className="ck-none">no dated activity</span>}</dd>
+                {p.meeting && <><dt>Last meeting</dt>
+                <dd><button className="ck-row" onClick={open(p.meeting.id)}>{shortTitle(p.meeting.title)}<small>{d.dateOf(p.meeting)}</small></button>
+                  {dec.length > 0 && <ul className="ck-dec">{dec.map((x, i) => <li key={i}>{x}</li>)}</ul>}</dd></>}
+              </dl>
               {p.components.length > 0 && <div className="ck-comps">{p.components.map(([k, n]) => {
                 const con = on && scope.component === k;
-                return <button key={k} className={'chip' + (con ? ' active' : '')} aria-pressed={con} onClick={() => onScope(con ? { project: p.project } : { project: p.project, component: k })} title={con ? `Back to ${name}` : `Scope the cockpit to this component`}>{nameOf(p.project, k)} <small>{n}</small></button>;
+                return <button key={k} className={'chip' + (con ? ' active' : '')} aria-pressed={con} onClick={e => { e.stopPropagation(); onScope(con ? { project: p.project } : { project: p.project, component: k }); }} title={con ? `Back to ${name}` : 'Scope the cockpit to this component'}>{nameOf(p.project, k)} <small>{n}</small></button>;
               })}</div>}
-              <button className="link ck-weekly" onClick={() => copy('w-' + p.project, weeklyPrompt(`${label} ${name}`, ticketFor(p.hub, p.notes), p.notes))} title="Copy a /fde-weekly-jira-update prompt for this project">{copied === 'w-' + p.project ? 'copied' : 'weekly update'}</button>
+              <div className="ck-card-foot"><span>{p.count} notes · {p.tasks} open {p.tasks === 1 ? 'task' : 'tasks'}</span>
+                <button className="link ck-weekly" onClick={e => { e.stopPropagation(); copy('w-' + p.project, weeklyPrompt(`${label} ${name}`, ticketFor(p.hub, p.notes), p.notes)); }} title="Copy a /fde-weekly-jira-update prompt for this project">{copied === 'w-' + p.project ? 'copied' : 'weekly update'}</button></div>
             </div>;
           })}</div>
         </section>}
@@ -101,8 +120,13 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
           <section className="pv-sec ck-wide">
             <div className="pv-sec-head"><h2>Open tasks</h2><small>{d.tasks.length}</small></div>
             {a.err && <div className="tv-err">{a.err}</div>}
-            {d.tasks.length ? <ul className="pv-list two">{d.tasks.slice(0, 30).map(t => <TaskRow key={keyOf(t)} t={t} a={a} canTick={canTick} onOpen={onSelect} sub={shortTitle(t.note.title)} />)}</ul> : <div className="pv-empty">No open tasks in this customer's notes.</div>}
-            {d.tasks.length > 30 && <div className="pv-empty">{d.tasks.length - 30} more in Tasks (filter by the customer name).</div>}
+            {d.taskGroups.length > 1 ? <div className="ck-tgroups">{d.taskGroups.map(g => <div key={g.component || '-'} className="ck-tgroup">
+              <div className="ck-tgroup-head">{g.component ? <button className="link" onClick={() => onScope({ project: scope.project, component: g.component })} title="Scope the cockpit to this component">{nameOf(scope.project!, g.component)}</button> : <span>Project-wide</span>}<small>{g.tasks.length}</small></div>
+              <ul className="pv-list">{g.tasks.slice(0, 4).map(t => <TaskRow key={keyOf(t)} t={t} a={a} canTick={canTick} onOpen={onSelect} sub={shortTitle(t.note.title)} />)}</ul>
+              {g.tasks.length > 4 && (g.component ? <button className="link ck-more" onClick={() => onScope({ project: scope.project, component: g.component })}>{g.tasks.length - 4} more</button> : <div className="pv-empty">{g.tasks.length - 4} more</div>)}
+            </div>)}</div>
+            : d.tasks.length ? <ul className="pv-list two">{d.tasks.slice(0, 30).map(t => <TaskRow key={keyOf(t)} t={t} a={a} canTick={canTick} onOpen={onSelect} sub={shortTitle(t.note.title)} />)}</ul> : <div className="pv-empty">No open tasks here.</div>}
+            {d.taskGroups.length <= 1 && d.tasks.length > 30 && <div className="pv-empty">{d.tasks.length - 30} more in Tasks (filter by the customer name).</div>}
           </section>
 
           <section className="pv-sec">
@@ -113,7 +137,7 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
           <section className="pv-sec">
             <div className="pv-sec-head"><h2>Needs attention</h2><small>{d.attention.length + d.questions.length}</small></div>
             {d.questions.length > 0 && <ul className="pv-notes">{d.questions.slice(0, 6).map(q => <li key={q.note.id}><button onClick={() => onSelect(q.note.id)}><b>{shortTitle(q.note.title)}</b><span>{q.items.length} open {q.items.length === 1 ? 'question' : 'questions'}: {q.items[0]}</span></button></li>)}</ul>}
-            {d.attention.length > 0 && <ul className="pv-notes">{d.attention.slice(0, 8).map(n => nlink(n, n.status.replace(/-/g, ' ') + ' · edited ' + ago(n.mtime)))}</ul>}
+            {d.attention.length > 0 && <ul className="pv-notes">{d.attention.slice(0, 8).map(n => nlink(n, n.status.replace(/-/g, ' ') + ' · ' + (realTime(n, act) ? 'active ' + ago(realTime(n, act)) : 'no dated activity')))}</ul>}
             {!d.attention.length && !d.questions.length && <div className="pv-empty">No drafts, stale notes or open questions.</div>}
           </section>
 

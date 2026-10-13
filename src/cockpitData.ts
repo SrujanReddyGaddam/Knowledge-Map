@@ -2,6 +2,7 @@ import type { Note } from 'virtual:vault';
 import { type Task, plainTask, DUE_TEXT } from './taskScan.ts';
 import { shortTitle } from './util.ts';
 import type { Project } from './projects';
+import { realTime, type Activity } from './realTime.ts';
 
 // Data for the customer cockpit and its "Brief me" text. Everything is derived from the notes' frontmatter and text, nothing is stored.
 export const pretty = (s: string) => s.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -49,13 +50,30 @@ export function openQuestions(n: Note) {
   return out;
 }
 
+// tasks that wait on someone else: "Jane to share...", "[[jane-doe]] will...", "waiting on/for", "blocked by", "ask X"
+const WAIT = /^(?:\[\[[^\]]+\]\]|[A-Z][a-z]+(?: [A-Z][a-z]+)?)\s+(?:to|will|should|owes|sends?)\s|\bwaiting (?:on|for)\b|\bblocked (?:by|on)\b|^(?:ask|chase|follow up with|ping)\s/i;
+export const waitsOnOthers = (t: Task) => WAIT.test(plainTask(t.text));
+// list items under a "Decisions" heading
+export function decisionsIn(n: Note) {
+  const out: string[] = []; let on = false, lvl = 0;
+  for (const l of withoutCode(n.body).split('\n')) {
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    if (h) { if (/^decisions?\b/i.test(h[2])) { on = true; lvl = h[1].length; continue; } if (on && h[1].length <= lvl) on = false; }
+    const it = on && l.match(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*\S)/);
+    if (it) out.push(plainTask(it[1]));
+  }
+  return out;
+}
+// the next step: a dated task first (soonest), else the first open task of the note worked on most recently
+const nextOrder = (act: Activity | null) => (a: Task, b: Task) => (a.due || '9').localeCompare(b.due || '9') || realTime(b.note, act) - realTime(a.note, act) || a.nth - b.nth;
+
 const dateOf = (n: Note) => n.path.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || n.meta.date || new Date(n.mtime).toISOString().slice(0, 10);
 const NEEDS = new Set(['draft', 'needs-verification', 'stale']);
 
 // scope: one project of the customer, or one component of that project. Every section then uses only those notes;
 // the project cards always cover the whole customer.
 export type Scope = { project?: string; component?: string };
-export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Set<string>, projects: Project[], scope: Scope = {}) {
+export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Set<string>, projects: Project[], scope: Scope = {}, act: Activity | null = null) {
   const all = notes.filter(n => ofCustomer(n, c));
   const mine = all.filter(n => (!scope.project || n.project === scope.project) && (!scope.component || n.component === scope.component));
   const ids = new Set(mine.map(n => n.id));
@@ -65,14 +83,17 @@ export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Se
   const byProject = new Map<string, Note[]>();
   for (const n of all) if (n.project) byProject.set(n.project, [...(byProject.get(n.project) || []), n]);
   const projectList = [...byProject].map(([p, list]) => {
-    const sorted = [...list].sort((a, b) => b.mtime - a.mtime), pids = new Set(list.map(n => n.id));
+    const sorted = [...list].sort((a, b) => realTime(b, act) - realTime(a, act)), pids = new Set(list.map(n => n.id));
+    const ptasks = tasks.filter(t => pids.has(t.note.id)).sort(nextOrder(act));
+    const worked = sorted.find(n => n.type !== 'hub' && realTime(n, act) > 0) ?? null;
     const comps = new Map<string, number>();
     for (const n of list) if (n.component) comps.set(n.component, (comps.get(n.component) || 0) + 1);
     const pHub = list.find(n => n.type === 'hub' && !n.component) ?? null;
     return {
-      project: p, hub: pHub, count: list.length, newest: sorted.find(n => n.type !== 'hub') ?? sorted[0], notes: list, mtime: sorted[0].mtime,
+      project: p, hub: pHub, count: list.length, newest: sorted.find(n => n.type !== 'hub') ?? sorted[0], notes: list, mtime: worked ? realTime(worked, act) : 0, worked,
       status: pHub && pHub.status !== 'none' && pHub.status !== 'unknown' ? pHub.status : '',
-      tasks: tasks.filter(t => pids.has(t.note.id)).length,
+      tasks: ptasks.length, next: ptasks[0] ?? null, waiting: ptasks.filter(waitsOnOthers),
+      questions: list.reduce((k, n) => k + openQuestions(n).length, 0),
       meeting: list.filter(n => n.type === 'meeting').sort((a, b) => dateOf(b).localeCompare(dateOf(a)))[0] ?? null,
       components: [...comps].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     };
@@ -81,10 +102,15 @@ export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Se
   const byId = new Map(notes.map(n => [n.id, n]));
   for (const n of mine) for (const o of [...n.links, ...n.backlinks]) { const p = byId.get(o); if (p && p.type === 'person') people.set(p.id, { note: p, n: (people.get(p.id)?.n || 0) + 1 }); }
   const questions = mine.map(n => ({ note: n, items: openQuestions(n) })).filter(x => x.items.length);
+  const myTasks = tasks.filter(t => ids.has(t.note.id)).sort(nextOrder(act));
+  // inside one project: open tasks per component (biggest first, project-wide last), each list starts with its next step
+  const groups = new Map<string, Task[]>();
+  if (scope.project && !scope.component) for (const t of myTasks) groups.set(t.note.component, [...(groups.get(t.note.component) || []), t]);
+  const taskGroups = [...groups].map(([component, list]) => ({ component, tasks: list })).sort((a, b) => (+!a.component - +!b.component) || b.tasks.length - a.tasks.length || a.component.localeCompare(b.component));
   return {
     mine, hub, all, scope,
     changed: mine.filter(n => changed.has(n.id)).sort((a, b) => b.mtime - a.mtime),
-    tasks: tasks.filter(t => ids.has(t.note.id)).sort((a, b) => (a.due || '9') .localeCompare(b.due || '9') || b.note.mtime - a.note.mtime),
+    tasks: myTasks, taskGroups,
     attention: mine.filter(n => NEEDS.has(n.status)).sort((a, b) => b.mtime - a.mtime),
     questions,
     meetings: mine.filter(n => n.type === 'meeting').sort((a, b) => dateOf(b).localeCompare(dateOf(a))).slice(0, 8),
@@ -92,7 +118,7 @@ export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Se
     people: [...people.values()].sort((a, b) => b.n - a.n).map(x => x.note),
     tickets: ticketsIn(mine),
     code: projects,
-    lastTouched: Math.max(0, ...mine.map(n => n.mtime)),
+    lastTouched: Math.max(0, ...mine.map(n => realTime(n, act))),
     dateOf,
   };
 }
@@ -122,7 +148,7 @@ export function briefText(c: string, d: CockpitData, jiraBase: string, label = p
   sec('Recent meetings', d.meetings.map(n => `- ${d.dateOf(n)} ${shortTitle(n.title)}${n.summary ? ': ' + n.summary : ''}`), 5);
   const proj = d.scope.project ? d.projects.find(p => p.project === d.scope.project) : null;
   if (proj && !d.scope.component) sec('Components', proj.components.map(([k, n]) => `- ${pretty(k)} (${n} ${n === 1 ? 'note' : 'notes'})`), 15);
-  if (!d.scope.project) sec('Projects', d.projects.map(p => `- ${pretty(p.project)}: ${p.hub?.summary || p.count + ' notes'}${p.newest ? ` Latest: ${shortTitle(p.newest.title)}.` : ''}`));
+  if (!d.scope.project) sec('Projects', d.projects.map(p => `- ${pretty(p.project)}: ${p.hub?.summary || p.count + ' notes'}${p.next ? ` Next step: ${plainTask(p.next.text).replace(DUE_TEXT, '').trim().replace(/[.\s]+$/, '')}.` : ''}${p.waiting.length ? ` Waiting on others: ${p.waiting.length}.` : ''}`));
   if (!d.scope.project) sec('Code projects', d.code.map(p => `- ${p.title}: ${p.plan?.status || p.status || 'no status'}${p.last?.next ? ` Next: ${p.last.next}` : ''}`));
   sec('People', d.people.map(n => `- ${shortTitle(n.title)}${n.summary ? ': ' + n.summary : ''}`), 10);
   sec('Tickets', d.tickets.map(t => `- ${jiraBase ? `[${t.key}](${jiraBase}${t.key})` : t.key} (${t.notes.size} ${t.notes.size === 1 ? 'note' : 'notes'})`), 10);

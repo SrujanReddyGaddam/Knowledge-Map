@@ -23,6 +23,7 @@ import Palette, { type Action } from './Palette';
 import { customersOf, ofCustomer, pretty } from './cockpitData';
 import { trailOf, pushTrail, customerOfNote } from './workspace';
 import Crumbs, { crumbsFor } from './Crumbs';
+import { useActivity, bulkOnly } from './activity';
 import { dailyNote, dailyPath, dailyVault, ensureDaily } from './journal';
 import { shortestPath } from './graphPath';
 import { contextPack } from './contextPack';
@@ -117,7 +118,9 @@ export default function App() {
   const [focus, setFocus] = useState<{ id: string; hops: 1 | 2 } | null>(() => (saved.focus && byId.has(saved.focus.id) ? saved.focus : null));
   const [seenState, setSeenState] = useState<Seen>(loadSeen);
   useEffect(() => saveSeen(seenState), [seenState]);
-  const changed = useMemo(() => { const s = new Set<string>(); for (const n of vault.notes) if (n.mtime > (seenState.seen[n.id] ?? seenState.base)) s.add(n.id); return s; }, [seenState]);
+  // edits that only a bulk commit explains (renames, re-tagging) do not count as changed, see activity.ts
+  const act = useActivity();
+  const changed = useMemo(() => { const s = new Set<string>(); for (const n of vault.notes) if (n.mtime > (seenState.seen[n.id] ?? seenState.base) && !bulkOnly(n, act)) s.add(n.id); return s; }, [seenState, act]);
   const markAllSeen = useCallback(() => setSeenState({ base: Date.now(), seen: {} }), []);
   const [hl, setHl] = useState(() => { try { return localStorage.getItem('hlChanged') !== '0'; } catch { return true; } });
   useEffect(() => { try { localStorage.setItem('hlChanged', hl ? '1' : '0'); } catch {} }, [hl]);
