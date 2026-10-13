@@ -24,7 +24,7 @@
 | `inbox/` | Unprocessed captures. Dump first, organize later. Target: empty each week. | days |
 | `sources/` | Raw, unedited material: transcripts, exports, pasted docs. File names start with the date. | forever, read-only |
 | `journal/` | One note per workday (`YYYY-MM-DD.md`): what happened, links to everything touched, tasks. | forever |
-| `projects/<customer>/<project>/` | Work with an end date: customer engagements and internal projects. Each customer and each project has a hub note. | until archived |
+| `projects/<customer>/<project>/` | Work with an end date: customer engagements and internal projects. Each customer and each project has a hub note. A project hub lists its parts under `## Components` (slug and one line each); notes about one part carry `component: <slug>`, and only big components get their own hub (`type: hub` with `project` and `component`), stored in the project folder. | until archived |
 | `knowledge/` | Evergreen, reusable, customer-free. One subfolder per area, e.g. `knowledge/<product>/`, `knowledge/domain/<area>/`, `knowledge/engineering/<area>/`, `knowledge/craft/`. | forever |
 | `research/` | Open questions being investigated. When closed, the verdict is promoted into `knowledge/`. | until closed |
 | `people/` | Colleagues and customer contacts: role, org, what they own, context. | forever |
@@ -69,6 +69,7 @@ sensitivity: internal    # public | internal | customer-confidential | personal
 tags: [retries, http]
 customer: acme           # only for customer material (slug)
 project: demo            # only for project material (slug)
+component: invoice-export  # optional: part of the project (slug from the project hub's Components list)
 status: current          # draft | current | needs-verification | stale | closed
 source: https://...      # or "none" if original
 source_fetched: 2026-01-15

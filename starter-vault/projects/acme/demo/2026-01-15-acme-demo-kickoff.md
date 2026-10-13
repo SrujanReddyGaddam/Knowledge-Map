@@ -6,6 +6,7 @@ sensitivity: customer-confidential
 tags: [example]
 customer: acme
 project: demo
+component: invoice-export
 date: 2026-01-15
 source: none
 status: current

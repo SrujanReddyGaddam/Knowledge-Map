@@ -46,7 +46,7 @@ const ago = (ms: number) => {
   const d = Math.round(h / 24); if (d < 30) return d === 1 ? 'yesterday' : d + ' days ago';
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 };
-const HEAD_FACETS: Facet[] = ['type', 'customer', 'project', 'status', 'sensitivity'];
+const HEAD_FACETS: Facet[] = ['type', 'customer', 'project', 'component', 'status', 'sensitivity'];
 
 // Prints just the note (see @media print in styles.css). The browser's print dialog has Save as PDF; the title becomes the file name.
 function exportPdf(title: string) {

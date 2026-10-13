@@ -76,7 +76,7 @@ export const one = (v: unknown) => (Array.isArray(v) ? String(v[0] ?? '') : Stri
 type RawNote = {
   vi: number; vault: string; base: string; fkey: string; path: string; abs: string; folder: string; title: string; tags: string[]; status: string; source: string; fetched: string;
   summary: string; body: string; related: string[]; rawLinks: string[]; id: string; links: string[]; backlinks: string[]; section: string;
-  type: string; customer: string; project: string; sensitivity: string; meta: Record<string, string>;
+  type: string; customer: string; project: string; component: string; sensitivity: string; meta: Record<string, string>;
   kind?: 'drawing'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number; writable: boolean;
 };
 
@@ -140,7 +140,7 @@ export function loadVaults(cfg: Config) {
         source: fm.source && fm.source !== 'none' ? String(fm.source) : '', fetched: String(fm.source_fetched || fm.updated || fm.date || ''),
         summary: scene ? `Excalidraw drawing, ${scene.elements.length} elements.${drawingText ? ' ' + drawingText.trim().split(/\n+/)[0].slice(0, 90) : ''}` : (typeof fm.summary === 'string' && fm.summary ? fm.summary.slice(0, 320) : summaryOf(body)),
         ...(scene ? { kind: 'drawing' as const, scene } : {}),
-        type: one(fm.type).toLowerCase(), customer: one(fm.customer).toLowerCase(), project: one(fm.project).toLowerCase(),
+        type: one(fm.type).toLowerCase(), customer: one(fm.customer).toLowerCase(), project: one(fm.project).toLowerCase(), component: one(fm.component).toLowerCase(),
         sensitivity: (one(fm.sensitivity) || v.sensitivity).toLowerCase(), meta: metaOf(fm),
         mtime, writable: v.writable && !scene && f.endsWith('.md'), body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: (prose => [...wikilinks(prose), ...mdlinks(prose)])(withoutCode(body)), links: [], backlinks: [],
       });

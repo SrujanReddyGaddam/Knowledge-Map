@@ -1,7 +1,7 @@
 import type { Note } from 'virtual:vault';
 
 // Frontmatter facets shown in the Filter popover. Values are lower-cased by the vault plugin.
-export const FACETS = ['type', 'customer', 'project', 'status', 'sensitivity'] as const;
+export const FACETS = ['type', 'customer', 'project', 'component', 'status', 'sensitivity'] as const;
 export type Facet = typeof FACETS[number];
 export type FacetSel = Partial<Record<Facet, string[]>>;
 export const facetOf = (n: Note, f: Facet) => {

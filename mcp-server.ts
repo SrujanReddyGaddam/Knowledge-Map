@@ -57,7 +57,7 @@ function find(q: unknown): Note {
   return n;
 }
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-const facts = (n: Note) => [n.type, n.customer && 'customer ' + n.customer, n.project && 'project ' + n.project, n.status !== 'none' && n.status !== 'unknown' && n.status, 'edited ' + day(n.mtime)].filter(Boolean).join(', ');
+const facts = (n: Note) => [n.type, n.customer && 'customer ' + n.customer, n.project && 'project ' + n.project, n.component && 'component ' + n.component, n.status !== 'none' && n.status !== 'unknown' && n.status, 'edited ' + day(n.mtime)].filter(Boolean).join(', ');
 const row = (n: Note) => `- ${n.title}  [id: ${n.id}]\n  ${facts(n)}${n.summary ? '\n  ' + n.summary : ''}\n  ${n.abs}`;
 const titleOf = (id: string) => data().byId.get(id)?.title ?? id;
 const tasksOf = (notes: Note[]) => collectTasks(notes).map(t => ({ ...t, plain: plainTask(t.text).replace(DUE_TEXT, '').trim() }));

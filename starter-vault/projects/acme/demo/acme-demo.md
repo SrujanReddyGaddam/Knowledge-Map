@@ -12,6 +12,10 @@ status: current
 ## Summary
 Goal: show how a project folder is laid out. Customer: [[acme]].
 
+## Components
+- `invoice-export`: the first slice, exporting invoices from the old archive.
+- `archive-migration`: moving the full archive, after the export works.
+
 ## All notes
 <!-- km:list customer=acme project=demo group=type sort=updated -->
 <!-- km:end -->

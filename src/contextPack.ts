@@ -18,7 +18,7 @@ export function contextPack(notes: Note[], id: string, jiraBase = '') {
   const tasks = collectTasks(near);
   const questions = near.map(o => ({ o, q: openQuestions(o) })).filter(x => x.q.length);
   const tickets = ticketsIn(near).slice(0, 10);
-  const facts = [n.type && `type ${n.type}`, n.customer && `customer ${pretty(n.customer)}`, n.project && `project ${pretty(n.project)}`, n.status !== 'none' && n.status !== 'unknown' && `status ${n.status}`, `edited ${new Date(n.mtime).toISOString().slice(0, 10)}`].filter(Boolean).join(', ');
+  const facts = [n.type && `type ${n.type}`, n.customer && `customer ${pretty(n.customer)}`, n.project && `project ${pretty(n.project)}`, n.component && `component ${pretty(n.component)}`, n.status !== 'none' && n.status !== 'unknown' && `status ${n.status}`, `edited ${new Date(n.mtime).toISOString().slice(0, 10)}`].filter(Boolean).join(', ');
   const L = [
     `Context from my knowledge vault for this session. Start by reading the main note, then open the linked notes that matter for the task.`, '',
     `## Main note: ${n.title}`, `File: ${n.abs}`, facts ? `Facts: ${facts}` : '', n.summary ? `Summary: ${n.summary}` : '', '',

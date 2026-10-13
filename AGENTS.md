@@ -46,7 +46,7 @@ Optional per vault:
 - `lint: true`: check notes against the vault schema in the Health tab (missing `type`/`summary`/`sensitivity`, `current` notes whose `source_fetched` is over 90 days old, inbox items over 7 days, notes not linked to a `type: hub` note). `inbox/`, `sources/`, `archive/` and `journal/` get lighter rules.
 - `sensitivity`: default for notes without one (e.g. `"personal"` for a personal vault).
 
-Frontmatter fields the app understands beyond title/tags/summary/status/source: `type`, `customer`, `project`, `sensitivity` (`public | internal | customer-confidential | personal`), plus any other key for `key:value` search. Templates for New note are the `.md` files in `<vault>/_templates/` (exclude that folder); template frontmatter may hold `km_folder:` (default folder) and `km_dated: true` (file name starts with the date), both removed from the new note; placeholders `{{title}}` `{{date}}`.
+Frontmatter fields the app understands beyond title/tags/summary/status/source: `type`, `customer`, `project`, `component` (optional part of a project, listed on the project hub under `## Components`), `sensitivity` (`public | internal | customer-confidential | personal`), plus any other key for `key:value` search. Templates for New note are the `.md` files in `<vault>/_templates/` (exclude that folder); template frontmatter may hold `km_folder:` (default folder) and `km_dated: true` (file name starts with the date), both removed from the new note; placeholders `{{title}}` `{{date}}`.
 
 `config.json` is git-ignored because it holds local paths. Only `config.example.json` is committed. Server restart is required after changing it.
 
@@ -85,7 +85,7 @@ Frontmatter fields the app understands beyond title/tags/summary/status/source: 
 | `src/palettes.ts`, `src/sound.ts` | Color palettes (tinted neutrals + one accent) and synthesized click sounds. |
 | `scripts/install-launchd.sh` | macOS always-on installer. |
 
-Data contract (`src/vault.d.ts`): a note has `id, vault, path, abs, section, title, tags, status, source, fetched, summary, body, links, backlinks, mtime, writable, type, customer, project, sensitivity, meta` (`meta` = every frontmatter key as a short string), optional `kind: 'drawing'` and `scene`. Note ids are the bare filename when unique, else `<vault>/<path>`. Wikilinks resolve within the same vault first, then across vaults.
+Data contract (`src/vault.d.ts`): a note has `id, vault, path, abs, section, title, tags, status, source, fetched, summary, body, links, backlinks, mtime, writable, type, customer, project, component, sensitivity, meta` (`meta` = every frontmatter key as a short string), optional `kind: 'drawing'` and `scene`. Note ids are the bare filename when unique, else `<vault>/<path>`. Wikilinks resolve within the same vault first, then across vaults.
 
 ## Conventions and gotchas
 - **Port:** defaults to 7777 and is read from env `KM_PORT` by both `vite.config.ts` and `vault-plugin.ts` (Host and Origin allowlists). The launchd script still passes `--port 7777`; if you change the port also set `KM_PORT` there. Other env: `KM_CONFIG` (alternate config file) and `KM_BACKUP_DIR` (default `~/.knowledge-map/backups`). Use all three to run a throwaway instance for tests beside a real one.

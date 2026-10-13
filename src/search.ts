@@ -22,7 +22,7 @@ export function buildIndex(notes: Note[]): Ix[] {
     const plain = strip(n.body);
     const fields: Record<string, string> = {};
     for (const [k, v] of Object.entries(n.meta)) { fields[k] = v.toLowerCase(); fieldKeys.add(k); }
-    Object.assign(fields, { type: n.type, customer: n.customer, project: n.project, sensitivity: n.sensitivity, status: n.status === 'none' || n.status === 'unknown' ? '' : n.status });
+    Object.assign(fields, { type: n.type, customer: n.customer, project: n.project, component: n.component, sensitivity: n.sensitivity, status: n.status === 'none' || n.status === 'unknown' ? '' : n.status });
     return {
       note: n, fields, title: n.title.toLowerCase(), file: (n.path.split('/').pop() || '').replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').toLowerCase(),
       path: n.path.toLowerCase(), vault: n.vault.toLowerCase(), tags: n.tags.map(t => t.toLowerCase()), tagStr: n.tags.join(' ').toLowerCase(),
