@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { marked } from 'marked';
 import type { Note } from 'virtual:vault';
 import vault from './data';
 import { shortTitle } from './util';
@@ -27,6 +28,8 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
   const code = useMemo(() => (customer && list ? list.filter(p => customerOf(p, customers) === customer) : []), [customer, list, customers]);
   const d = useMemo(() => (customer ? cockpitData(customer, notes, tasks, changed, code) : null), [customer, notes, tasks, changed, code]);
   const text = useMemo(() => (customer && d && brief ? briefText(customer, d, vault.jiraBase) : ''), [customer, d, brief]);
+  // shown rendered; Copy as markdown still copies the text. Raw HTML in note titles or summaries is escaped, links open in a new tab.
+  const html = useMemo(() => (text ? (marked.parse(text.replace(/&/g, '&amp;').replace(/</g, '&lt;'), { async: false }) as string).replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=') : ''), [text]);
   const counts = useMemo(() => new Map(customers.map(c => [c, notes.filter(n => ofCustomer(n, c)).length])), [customers, notes]);
 
   const nlink = (n: Note, extra?: string) => (
@@ -64,7 +67,7 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
         </div>
         {brief && <section className="ck-brief">
           <div className="pv-sec-head"><h2>Brief</h2><button className="link" onClick={() => copy('brief', text)}>{copied === 'brief' ? 'Copied' : 'Copy as markdown'}</button></div>
-          <pre>{text}</pre>
+          <div className="ck-brief-md" dangerouslySetInnerHTML={{ __html: html }} />
         </section>}
 
         <div className="ck-grid">
