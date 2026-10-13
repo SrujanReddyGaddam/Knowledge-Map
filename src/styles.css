@@ -241,7 +241,10 @@ mark { background:color-mix(in srgb, var(--accent) 24%, transparent); color:inhe
   .panel { position:static !important; transform:none !important; width:auto !important; height:auto !important; border:0 !important; background:#fff !important; display:block !important; }
   .p-head, .p-nav, .p-resize, .actions, .toc, .read-more, .label, .p-lead, .p-meta, .p-body > :not(.p-title):not(.print-keep) { display:none !important; }
   .md > h1:first-child { display:none !important; }
-  .p-body { overflow:visible !important; padding:0 !important; animation:none !important; }
+  /* no page margin, so Chrome has no room for its own header and footer (URL, date, page numbers); the white space lives in the note
+     padding instead, repeated on every page by box-decoration-break */
+  @page { margin:0; }
+  .p-body { overflow:visible !important; padding:16mm 18mm !important; -webkit-box-decoration-break:clone; box-decoration-break:clone; animation:none !important; }
   .md { max-height:none !important; overflow:visible !important; -webkit-mask:none !important; mask:none !important; }
   .md::after { display:none !important; }
   .md img, .md svg { max-width:100%; } .md pre, .md table, .md blockquote { break-inside:avoid; }
