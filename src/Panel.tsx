@@ -16,6 +16,7 @@ import { setTaskInRaw, taskKey } from './taskScan';
 import { rawNote, saveNote } from './api';
 import { unlinkedMentions, linkFirstMention } from './mentions';
 import { weeklyPrompt, ticketFor, ofCustomer, pretty } from './cockpitData';
+import Crumbs, { crumbsFor, scopeOf } from './Crumbs';
 
 type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
@@ -103,6 +104,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const [umDone, setUmDone] = useState<Set<string>>(() => new Set());
   const [umErr, setUmErr] = useState('');
   useEffect(() => { setUmOpen(false); setUmDone(new Set()); setUmErr(''); }, [note?.id]);
+  const crumbs = useMemo(() => (note ? crumbsFor([...byId.values()], scopeOf(note)) : []), [note, byId]);
   const unlinked = useMemo(() => (umOpen && note ? unlinkedMentions(note, [...byId.values()]) : []), [umOpen, note, byId]);
   const linkMention = async (src: Note) => {
     if (!note) return; setUmErr('');
@@ -209,6 +211,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             </div>
           ) : (
           <div className="p-body" ref={bodyRef} key={note.id} onScroll={onBodyScroll}>
+            <Crumbs className="eyebrow p-crumbs" parts={crumbs} selfId={note.id} onOpen={onNav} onFacet={onFacet} />
             <h1 className="p-title">{shortTitle(note.title)}</h1>
             {sub && <div className="p-sub">{sub}</div>}
             <p className="p-lead">{note.summary}</p>

@@ -138,7 +138,14 @@ section { border-top:1px solid var(--line); margin-top:26px; padding-top:16px; }
 
 .vol { display:flex; align-items:center; gap:10px; padding:8px 10px 2px; font:11px var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--mute); }
 .vol input[type=range] { flex:1; accent-color:var(--accent); height:4px; } .vol b { min-width:24px; text-align:right; color:var(--ink); font-weight:500; }
-.p-head { gap:12px; } .p-head .eyebrow { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.p-head { gap:12px; }
+.crumbs { display:flex; align-items:center; min-width:0; white-space:nowrap; } .crumbs > span { display:inline-flex; align-items:center; min-width:0; }
+.crumb { all:unset; cursor:pointer; overflow:hidden; text-overflow:ellipsis; border-radius:4px; padding:1px 2px; } .crumb:hover { color:var(--ink); text-decoration:underline; text-underline-offset:3px; } .crumb:focus-visible { outline:2px solid var(--accent); }
+.crumb-sep { margin:0 6px; opacity:.6; }
+.p-crumbs { flex-wrap:wrap; white-space:normal; row-gap:2px; margin:0 0 10px; } .p-crumbs > span, .p-crumbs .crumb { min-width:auto; overflow:visible; }
+@media print { .p-crumbs { display:none; } }
+.ws-name { display:inline-flex; align-items:center; gap:4px; } .ws-name .crumb:hover { color:inherit; } .ws-x { all:unset; cursor:pointer; padding:0 2px 0 4px; opacity:.8; } .ws-x:hover { opacity:1; }
+.ck-crumbs { display:flex; align-items:center; } .ck-crumbs .crumb { text-transform:inherit; } .p-head .eyebrow { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .p-head-right { flex:none; } .idx { white-space:nowrap; }
 
 /* search results */

@@ -6,20 +6,22 @@ import { shortTitle } from './util';
 import type { Task } from './taskScan';
 import { TaskRow, useTaskActions, keyOf } from './TaskRow';
 import ResumeCard from './ResumeCard';
+import Crumbs, { crumbsFor } from './Crumbs';
+import type { Facet } from './facets';
 import { useProjects, projectsOn, customerOf } from './projects';
 import { cockpitData, briefText, weeklyPrompt, ticketFor, pretty, ofCustomer } from './cockpitData';
 
 // Customer cockpit (key k): one page per customer with everything open or new, so a call can start from a 30 second recap.
 type Props = {
   customer: string | null; customers: string[]; right: number; notes: Note[]; tasks: Task[]; changed: Set<string>; canTick: boolean; selected: string | null;
-  onCustomer: (c: string | null) => void; onSelect: (id: string) => void; onClose: () => void;
+  onCustomer: (c: string | null) => void; onSelect: (id: string) => void; onFacet: (f: Facet, v: string) => void; onClose: () => void;
 };
 const ago = (ms: number) => {
   const d = Math.floor((Date.now() - ms) / 864e5);
   return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 30 ? d + ' days ago' : d < 365 ? Math.round(d / 30) + ' mo ago' : Math.round(d / 365) + ' y ago';
 };
 
-export default function Cockpit({ customer, customers, right, notes, tasks, changed, canTick, selected, onCustomer, onSelect, onClose }: Props) {
+export default function Cockpit({ customer, customers, right, notes, tasks, changed, canTick, selected, onCustomer, onSelect, onFacet, onClose }: Props) {
   const a = useTaskActions();
   const { list } = useProjects();
   const [brief, setBrief] = useState(false);
@@ -48,13 +50,14 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
   );
 
   const label = pretty(customer);
+  const crumbs = crumbsFor(notes, { customer });
   return (
     <div className="tasks-view page-view" style={{ right }} role="dialog" aria-label={'Cockpit: ' + label}>
       <div className="tv-scroll">
         <header className="tv-head">
           <div>
-            <div className="label"><button className="link" onClick={() => onCustomer(null)}>Customers</button> / cockpit</div>
-            <h1>{label}</h1>
+            <div className="label ck-crumbs"><button className="link" onClick={() => onCustomer(null)}>Customers</button><span className="crumb-sep" aria-hidden>&rsaquo;</span><Crumbs parts={crumbs} onOpen={onSelect} onFacet={onFacet} /><span className="crumb-sep" aria-hidden>/</span>cockpit</div>
+            <h1>{crumbs[0]?.label ?? label}</h1>
             <p>{d.mine.length} notes · last touched {ago(d.lastTouched)}{d.changed.length ? <> · <b className="accent">{d.changed.length} changed since you last looked</b></> : ''}</p>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close  (k or Esc)">&times;</button>

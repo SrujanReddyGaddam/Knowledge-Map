@@ -22,6 +22,7 @@ import Capture from './Capture';
 import Palette, { type Action } from './Palette';
 import { customersOf, ofCustomer, pretty } from './cockpitData';
 import { trailOf, pushTrail, customerOfNote } from './workspace';
+import Crumbs, { crumbsFor } from './Crumbs';
 import { dailyNote, dailyPath, dailyVault, ensureDaily } from './journal';
 import { shortestPath } from './graphPath';
 import { contextPack } from './contextPack';
@@ -230,6 +231,7 @@ export default function App() {
   const facetCount = FACETS.reduce((a, f) => a + (facets[f]?.length || 0), 0);
   const filterCount = (section ? 1 : 0) + vaultSel.length + tags.length + (focus ? 1 : 0) + facetCount;
   const clearFilters = () => { setSection(null); setTags([]); setVaultSel([]); setFocus(null); setFacets({}); };
+  const pickFacet = (f: Facet, v: string) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); };
   const toggleFacet = (f: Facet, v: string) => setFacets(fs => { const cur = fs[f] ?? [], nx = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]; const o = { ...fs }; if (nx.length) o[f] = nx; else delete o[f]; return o; });
   const tints = useMemo(() => (colorBy === 'type' ? typeTints(vault.notes, dark) : colorBy === 'age' ? ageTints(vault.notes, dark) : null), [colorBy, dark]);
   const toggleTag = (t: string) => setTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
@@ -391,7 +393,7 @@ export default function App() {
         </div>
         {matches && (
           <div className="active-filters">
-            {workspace && <span className="ws-chip"><button className="chip active" onClick={leaveWorkspace} title="Leave the workspace  (g)">Workspace: {pretty(workspace)} &times;</button>
+            {workspace && <span className="ws-chip"><span className="chip active ws-name">Workspace:<Crumbs parts={crumbsFor(vault.notes, { customer: workspace })} onOpen={select} onFacet={pickFacet} /><button className="ws-x" onClick={leaveWorkspace} title="Leave the workspace  (g)" aria-label="Leave the workspace">&times;</button></span>
               <button className="link" onClick={() => openCockpit(workspace)}>cockpit</button>
               {trail.filter(id => id !== selected && byId.has(id)).length > 0 && <span className="ws-trail"><small>Where was I</small>{trail.filter(id => id !== selected && byId.has(id)).slice(0, 5).map(id => <button key={id} className="chip tag" onClick={() => select(id)} title={byId.get(id)!.summary}>{shortTitle(byId.get(id)!.title)}</button>)}</span>}</span>}
             {focus && byId.get(focus.id) && <span className="focus-chip"><button className="chip active" onClick={() => { setFocus(null); setFocusMode(false); }} title="Clear focus">Focus: {shortTitle(byId.get(focus.id)!.title)} &times;</button>
@@ -457,7 +459,7 @@ export default function App() {
  {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
  {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} />}
  {view === 'week' && <Week right={panelW} notes={vault.notes} customers={customers} selected={selected} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} />}
- {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} onCustomer={setCustomer} onSelect={select} onClose={() => setView(null)} />}
+ {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} onCustomer={setCustomer} onSelect={select} onFacet={(f, v) => { setView(null); pickFacet(f, v); }} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
@@ -535,7 +537,7 @@ export default function App() {
       </div>}
       {toast && <div className="toast" role="status">{toast}</div>}
       <Panel editing={!!note && editId === note.id} draft={draftRef.current} onEdit={() => note && setEditId(note.id)} onEditEnd={() => endEdit()} onDirty={d => { dirtyRef.current = d; }} onSaved={(id, mtime) => setSeenState(s => ({ ...s, seen: { ...s.seen, [id]: mtime } }))} onDelete={deleteNote} dark={dark} width={maxed ? vw : fullW} maxed={maxed} onMax={() => setMaxed(m => !m)} fs={fs} onFs={setFs} onResize={w => setPanelPref(w === 0 ? 0 : Math.round(w))} open={!!note} note={note ?? lastNote.current} index={idx >= 0 ? idx : Math.max(0, navOrder.indexOf(lastNote.current?.id ?? ''))} total={navOrder.length} byId={byId} resolve={resolve} prev={prev ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) - 1 + order.length) % order.length])! : null)} next={next ?? (lastNote.current ? byId.get(order[(order.indexOf(lastNote.current.id) + 1) % order.length])! : null)}
-        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={(f, v) => { if (!facets[f]?.includes(v)) toggleFacet(f, v); setFilterOpen(true); }} onCockpit={c => openCockpit(c)} onPath={() => setPathPick(true)} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
+        onNav={select} onTag={t => { setTags(ts => (ts.includes(t) ? ts : [...ts, t])); setFilterOpen(true); }} onFacet={pickFacet} onCockpit={c => openCockpit(c)} onPath={() => setPathPick(true)} tint={note ? tints?.get(note.id) : undefined} onClose={() => select(null)} />
     </>
   );
 }
