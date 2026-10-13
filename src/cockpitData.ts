@@ -52,22 +52,37 @@ export function openQuestions(n: Note) {
 const dateOf = (n: Note) => n.path.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || n.meta.date || new Date(n.mtime).toISOString().slice(0, 10);
 const NEEDS = new Set(['draft', 'needs-verification', 'stale']);
 
-export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Set<string>, projects: Project[]) {
-  const mine = notes.filter(n => ofCustomer(n, c));
+// scope: one project of the customer, or one component of that project. Every section then uses only those notes;
+// the project cards always cover the whole customer.
+export type Scope = { project?: string; component?: string };
+export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Set<string>, projects: Project[], scope: Scope = {}) {
+  const all = notes.filter(n => ofCustomer(n, c));
+  const mine = all.filter(n => (!scope.project || n.project === scope.project) && (!scope.component || n.component === scope.component));
   const ids = new Set(mine.map(n => n.id));
-  const hub = mine.find(n => n.type === 'hub' && !n.project) ?? mine.find(n => n.type === 'hub') ?? null;
+  const customerHub = all.find(n => n.type === 'hub' && !n.project) ?? all.find(n => n.type === 'hub') ?? null;
+  const hub = !scope.project ? customerHub
+    : mine.find(n => n.type === 'hub' && (scope.component ? n.component === scope.component : !n.component)) ?? (scope.component ? null : mine.find(n => n.type === 'hub') ?? null);
   const byProject = new Map<string, Note[]>();
-  for (const n of mine) if (n.project) byProject.set(n.project, [...(byProject.get(n.project) || []), n]);
+  for (const n of all) if (n.project) byProject.set(n.project, [...(byProject.get(n.project) || []), n]);
   const projectList = [...byProject].map(([p, list]) => {
-    const sorted = [...list].sort((a, b) => b.mtime - a.mtime);
-    return { project: p, hub: list.find(n => n.type === 'hub') ?? null, count: list.length, newest: sorted.find(n => n.type !== 'hub') ?? sorted[0], notes: list, mtime: sorted[0].mtime };
+    const sorted = [...list].sort((a, b) => b.mtime - a.mtime), pids = new Set(list.map(n => n.id));
+    const comps = new Map<string, number>();
+    for (const n of list) if (n.component) comps.set(n.component, (comps.get(n.component) || 0) + 1);
+    const pHub = list.find(n => n.type === 'hub' && !n.component) ?? null;
+    return {
+      project: p, hub: pHub, count: list.length, newest: sorted.find(n => n.type !== 'hub') ?? sorted[0], notes: list, mtime: sorted[0].mtime,
+      status: pHub && pHub.status !== 'none' && pHub.status !== 'unknown' ? pHub.status : '',
+      tasks: tasks.filter(t => pids.has(t.note.id)).length,
+      meeting: list.filter(n => n.type === 'meeting').sort((a, b) => dateOf(b).localeCompare(dateOf(a)))[0] ?? null,
+      components: [...comps].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    };
   }).sort((a, b) => b.mtime - a.mtime);
   const people = new Map<string, { note: Note; n: number }>();
   const byId = new Map(notes.map(n => [n.id, n]));
   for (const n of mine) for (const o of [...n.links, ...n.backlinks]) { const p = byId.get(o); if (p && p.type === 'person') people.set(p.id, { note: p, n: (people.get(p.id)?.n || 0) + 1 }); }
   const questions = mine.map(n => ({ note: n, items: openQuestions(n) })).filter(x => x.items.length);
   return {
-    mine, hub,
+    mine, hub, all, scope,
     changed: mine.filter(n => changed.has(n.id)).sort((a, b) => b.mtime - a.mtime),
     tasks: tasks.filter(t => ids.has(t.note.id)).sort((a, b) => (a.due || '9') .localeCompare(b.due || '9') || b.note.mtime - a.note.mtime),
     attention: mine.filter(n => NEEDS.has(n.status)).sort((a, b) => b.mtime - a.mtime),
@@ -96,8 +111,8 @@ export function weeklyPrompt(label: string, ticket: string, notes: Note[]) {
     ...list.map(n => `- ${n.abs}  (${shortTitle(n.title)}, edited ${new Date(n.mtime).toISOString().slice(0, 10)})`)].join('\n');
 }
 
-export function briefText(c: string, d: CockpitData, jiraBase: string) {
-  const L: string[] = [`# ${pretty(c)}: brief (${new Date().toISOString().slice(0, 10)})`, ''];
+export function briefText(c: string, d: CockpitData, jiraBase: string, label = pretty(c)) {
+  const L: string[] = [`# ${label}: brief (${new Date().toISOString().slice(0, 10)})`, ''];
   if (d.hub?.summary) L.push(d.hub.summary, '');
   const sec = (title: string, rows: string[], max = 8) => { if (!rows.length) return; L.push(`## ${title}`, ...rows.slice(0, max), ...(rows.length > max ? [`- ...and ${rows.length - max} more`] : []), ''); };
   sec(`Changed since you last looked (${d.changed.length})`, d.changed.map(n => `- ${shortTitle(n.title)} (edited ${new Date(n.mtime).toISOString().slice(0, 10)})`));
@@ -105,8 +120,10 @@ export function briefText(c: string, d: CockpitData, jiraBase: string) {
   sec('Open questions', d.questions.flatMap(q => q.items.slice(0, 3).map(i => `- ${i} [${shortTitle(q.note.title)}]`)), 10);
   sec('Needs attention', d.attention.map(n => `- ${shortTitle(n.title)}: ${n.status}`));
   sec('Recent meetings', d.meetings.map(n => `- ${d.dateOf(n)} ${shortTitle(n.title)}${n.summary ? ': ' + n.summary : ''}`), 5);
-  sec('Projects', d.projects.map(p => `- ${pretty(p.project)}: ${p.hub?.summary || p.count + ' notes'}${p.newest ? ` Latest: ${shortTitle(p.newest.title)}.` : ''}`));
-  sec('Code projects', d.code.map(p => `- ${p.title}: ${p.plan?.status || p.status || 'no status'}${p.last?.next ? ` Next: ${p.last.next}` : ''}`));
+  const proj = d.scope.project ? d.projects.find(p => p.project === d.scope.project) : null;
+  if (proj && !d.scope.component) sec('Components', proj.components.map(([k, n]) => `- ${pretty(k)} (${n} ${n === 1 ? 'note' : 'notes'})`), 15);
+  if (!d.scope.project) sec('Projects', d.projects.map(p => `- ${pretty(p.project)}: ${p.hub?.summary || p.count + ' notes'}${p.newest ? ` Latest: ${shortTitle(p.newest.title)}.` : ''}`));
+  if (!d.scope.project) sec('Code projects', d.code.map(p => `- ${p.title}: ${p.plan?.status || p.status || 'no status'}${p.last?.next ? ` Next: ${p.last.next}` : ''}`));
   sec('People', d.people.map(n => `- ${shortTitle(n.title)}${n.summary ? ': ' + n.summary : ''}`), 10);
   sec('Tickets', d.tickets.map(t => `- ${jiraBase ? `[${t.key}](${jiraBase}${t.key})` : t.key} (${t.notes.size} ${t.notes.size === 1 ? 'note' : 'notes'})`), 10);
   return L.join('\n').trim() + '\n';

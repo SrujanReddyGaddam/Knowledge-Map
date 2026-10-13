@@ -144,8 +144,17 @@ export default function App() {
     return c && customers.includes(c) ? c : null;
   });
   useEffect(() => { try { localStorage.setItem('cockpitCustomer', customer || ''); } catch {} }, [customer]);
+  // cockpit scope: one project (&project=) or component (&component=) of the cockpit customer; kept per customer so k reopens it
+  const [ckScope, setCkScope] = useState<{ customer?: string; project?: string; component?: string }>(() => {
+    const u = new URLSearchParams(location.search), project = u.get('project') || '', component = u.get('component') || '';
+    if (project) return { customer: customer || '', project, component: component || undefined };
+    try { return JSON.parse(localStorage.getItem('cockpitScope') || '{}') || {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('cockpitScope', JSON.stringify(ckScope)); } catch {} }, [ckScope]);
+  const scopeNow = useMemo(() => (ckScope.customer === customer && ckScope.project && vault.notes.some(n => n.project === ckScope.project && ofCustomer(n, customer!))
+    ? { project: ckScope.project, ...(ckScope.component ? { component: ckScope.component } : {}) } : {}), [ckScope, customer]);
   // one-shot URL params (app shortcuts) are dropped after use so a reload does not repeat them
-  useEffect(() => { const u = new URL(location.href); if (['capture', 'view', 'customer'].some(k => u.searchParams.has(k))) { ['capture', 'view', 'customer'].forEach(k => u.searchParams.delete(k)); history.replaceState(null, '', u.toString()); } }, []);
+  useEffect(() => { const u = new URL(location.href); if (['capture', 'view', 'customer', 'project', 'component'].some(k => u.searchParams.has(k))) { ['capture', 'view', 'customer', 'project', 'component'].forEach(k => u.searchParams.delete(k)); history.replaceState(null, '', u.toString()); } }, []);
   // workspace: one customer as the context (key g): the map shows only its notes, the cockpit opens on it, a trail shows where you were
   const [workspace, setWorkspace] = useState<string | null>(() => { try { const w = localStorage.getItem('workspace'); return w && customers.includes(w) ? w : null; } catch { return null; } });
   useEffect(() => { try { localStorage.setItem('workspace', workspace || ''); } catch {} }, [workspace]);
@@ -459,7 +468,7 @@ export default function App() {
  {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
  {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} />}
  {view === 'week' && <Week right={panelW} notes={vault.notes} customers={customers} selected={selected} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} />}
- {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} onCustomer={setCustomer} onSelect={select} onFacet={(f, v) => { setView(null); pickFacet(f, v); }} onClose={() => setView(null)} />}
+ {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} scope={scopeNow} onScope={s => setCkScope({ customer: customer || '', ...s })} onCustomer={setCustomer} onSelect={select} onFacet={(f, v) => { setView(null); pickFacet(f, v); }} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
         <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>

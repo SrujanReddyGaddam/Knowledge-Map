@@ -23,7 +23,7 @@ export function crumbsFor(notes: Note[], s: Scope): Crumb[] {
     const hub = hubs.find(n => n.project === s.project && n.component === s.component) ?? null;
     // component hubs are titled "Project: Component"; keep the part after the project name
     const t = hub ? shortTitle(hub.title) : '', pre = out[out.length - 1]?.label;
-    const label = hub && s.project && pre && t.startsWith(pre + ':') ? t.slice(pre.length + 1).trim() : t || pretty(s.component);
+    const label = hub && s.project && pre && t.startsWith(pre + ':') ? t.slice(pre.length + 1).trim() : t || s.component.replace(/-/g, ' ');
     out.push({ facet: 'component', value: s.component, label, hub });
   }
   return out;
@@ -32,15 +32,18 @@ export function crumbsFor(notes: Note[], s: Scope): Crumb[] {
 // a note's own place: customer from its customer: field, else its folder under projects/
 export const scopeOf = (n: Note): Scope => ({ customer: n.customer || n.path.toLowerCase().match(/^projects\/([^/]+)\//)?.[1] || '', project: n.project, component: n.component });
 
-export default function Crumbs({ parts, selfId, onOpen, onFacet, className }: { parts: Crumb[]; selfId?: string; onOpen: (id: string) => void; onFacet: (f: Facet, v: string) => void; className?: string }) {
+// onPick replaces the default action (the cockpit uses it to change its scope); `current` marks the last part as where you are
+export default function Crumbs({ parts, selfId, onOpen, onFacet, onPick, current, className }: { parts: Crumb[]; selfId?: string; onOpen: (id: string) => void; onFacet: (f: Facet, v: string) => void; onPick?: (c: Crumb, i: number) => void; current?: boolean; className?: string }) {
   if (!parts.length) return null;
   return <nav className={'crumbs' + (className ? ' ' + className : '')} aria-label="Breadcrumb">
     {parts.map((p, i) => {
       const hub = p.facet !== 'component' && p.hub && p.hub.id !== selfId ? p.hub : null;
+      const sep = i > 0 && <span className="crumb-sep" aria-hidden>&rsaquo;</span>;
+      if (current && i === parts.length - 1) return <span key={p.facet}>{sep}<span className="crumb-cur" aria-current="page">{p.label}</span></span>;
       return <span key={p.facet}>
-        {i > 0 && <span className="crumb-sep" aria-hidden>&rsaquo;</span>}
-        <button className="crumb" onClick={() => (hub ? onOpen(hub.id) : onFacet(p.facet, p.value))}
-          title={hub ? `Open ${shortTitle(hub.title)}` : `Show only notes with ${p.facet}: ${p.value}`}>{p.label}</button>
+        {sep}
+        <button className="crumb" onClick={() => (onPick ? onPick(p, i) : hub ? onOpen(hub.id) : onFacet(p.facet, p.value))}
+          title={onPick ? `Show ${p.label}` : hub ? `Open ${shortTitle(hub.title)}` : `Show only notes with ${p.facet}: ${p.value}`}>{p.label}</button>
       </span>;
     })}
   </nav>;

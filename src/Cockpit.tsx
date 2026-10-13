@@ -9,11 +9,12 @@ import ResumeCard from './ResumeCard';
 import Crumbs, { crumbsFor } from './Crumbs';
 import type { Facet } from './facets';
 import { useProjects, projectsOn, customerOf } from './projects';
-import { cockpitData, briefText, weeklyPrompt, ticketFor, pretty, ofCustomer } from './cockpitData';
+import { cockpitData, briefText, weeklyPrompt, ticketFor, pretty, ofCustomer, type Scope } from './cockpitData';
 
 // Customer cockpit (key k): one page per customer with everything open or new, so a call can start from a 30 second recap.
 type Props = {
   customer: string | null; customers: string[]; right: number; notes: Note[]; tasks: Task[]; changed: Set<string>; canTick: boolean; selected: string | null;
+  scope: Scope; onScope: (s: Scope) => void;
   onCustomer: (c: string | null) => void; onSelect: (id: string) => void; onFacet: (f: Facet, v: string) => void; onClose: () => void;
 };
 const ago = (ms: number) => {
@@ -21,15 +22,17 @@ const ago = (ms: number) => {
   return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 30 ? d + ' days ago' : d < 365 ? Math.round(d / 30) + ' mo ago' : Math.round(d / 365) + ' y ago';
 };
 
-export default function Cockpit({ customer, customers, right, notes, tasks, changed, canTick, selected, onCustomer, onSelect, onFacet, onClose }: Props) {
+export default function Cockpit({ customer, customers, right, notes, tasks, changed, canTick, selected, scope, onScope, onCustomer, onSelect, onFacet, onClose }: Props) {
   const a = useTaskActions();
   const { list } = useProjects();
   const [brief, setBrief] = useState(false);
   const [copied, setCopied] = useState('');
   const copy = (what: string, text: string) => navigator.clipboard.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(''), 1600); });
   const code = useMemo(() => (customer && list ? list.filter(p => customerOf(p, customers) === customer) : []), [customer, list, customers]);
-  const d = useMemo(() => (customer ? cockpitData(customer, notes, tasks, changed, code) : null), [customer, notes, tasks, changed, code]);
-  const text = useMemo(() => (customer && d && brief ? briefText(customer, d, vault.jiraBase) : ''), [customer, d, brief]);
+  const d = useMemo(() => (customer ? cockpitData(customer, notes, tasks, changed, code, scope) : null), [customer, notes, tasks, changed, code, scope]);
+  const crumbs = useMemo(() => (customer ? crumbsFor(notes, { customer, ...scope }) : []), [customer, notes, scope]);
+  const scopeLabel = crumbs.map(c => c.label).join(' > ');
+  const text = useMemo(() => (customer && d && brief ? briefText(customer, d, vault.jiraBase, scopeLabel) : ''), [customer, d, brief, scopeLabel]);
   // shown rendered; Copy as markdown still copies the text. Raw HTML in note titles or summaries is escaped, links open in a new tab.
   const html = useMemo(() => (text ? (marked.parse(text.replace(/&/g, '&amp;').replace(/</g, '&lt;'), { async: false }) as string).replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=') : ''), [text]);
   const counts = useMemo(() => new Map(customers.map(c => [c, notes.filter(n => ofCustomer(n, c)).length])), [customers, notes]);
@@ -50,15 +53,17 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
   );
 
   const label = pretty(customer);
-  const crumbs = crumbsFor(notes, { customer });
+  const scoped = !!scope.project;
+  // project and component names as their hubs title them
+  const nameOf = (project: string, component?: string) => crumbsFor(notes, { customer, project, component }).at(-1)!.label;
   return (
     <div className="tasks-view page-view" style={{ right }} role="dialog" aria-label={'Cockpit: ' + label}>
       <div className="tv-scroll">
         <header className="tv-head">
           <div>
-            <div className="label ck-crumbs"><button className="link" onClick={() => onCustomer(null)}>Customers</button><span className="crumb-sep" aria-hidden>&rsaquo;</span><Crumbs parts={crumbs} onOpen={onSelect} onFacet={onFacet} /><span className="crumb-sep" aria-hidden>/</span>cockpit</div>
-            <h1>{crumbs[0]?.label ?? label}</h1>
-            <p>{d.mine.length} notes · last touched {ago(d.lastTouched)}{d.changed.length ? <> · <b className="accent">{d.changed.length} changed since you last looked</b></> : ''}</p>
+            <div className="label ck-crumbs"><button className="link" onClick={() => onCustomer(null)}>Customers</button><span className="crumb-sep" aria-hidden>&rsaquo;</span><Crumbs parts={crumbs} onOpen={onSelect} onFacet={onFacet} current onPick={(_, i) => onScope(i === 0 ? {} : { project: scope.project })} /><span className="crumb-sep" aria-hidden>/</span>cockpit</div>
+            <h1>{(() => { const l = crumbs.at(-1); return !l ? label : l.facet === 'component' && !l.hub ? pretty(l.value) : l.label; })()}</h1>
+            <p>{scoped && <><button className="link" onClick={() => onScope({})}>whole customer</button> · </>}{d.mine.length} notes · last touched {ago(d.lastTouched)}{d.changed.length ? <> · <b className="accent">{d.changed.length} changed since you last looked</b></> : ''}</p>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close  (k or Esc)">&times;</button>
         </header>
@@ -66,11 +71,30 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
         <div className="pv-actions">
           <button className="btn primary" onClick={() => setBrief(v => !v)} aria-expanded={brief}>{brief ? 'Hide brief' : 'Brief me'}</button>
           {d.hub && <button className="btn" onClick={() => onSelect(d.hub!.id)}>Open hub note</button>}
-          <button className="btn" onClick={() => copy('weekly', weeklyPrompt(label, ticketFor(d.hub, d.mine), d.mine))} title="Copies a prompt for the /fde-weekly-jira-update skill with the notes changed this week. Paste it into Claude Code.">{copied === 'weekly' ? 'Prompt copied' : 'Weekly Jira update prompt'}</button>
+          <button className="btn" onClick={() => copy('weekly', weeklyPrompt(crumbs.map(c => c.label).join(', '), ticketFor(d.hub, d.mine), d.mine))} title="Copies a prompt for the /fde-weekly-jira-update skill with the notes changed this week. Paste it into Claude Code.">{copied === 'weekly' ? 'Prompt copied' : 'Weekly Jira update prompt'}</button>
         </div>
         {brief && <section className="ck-brief">
           <div className="pv-sec-head"><h2>Brief</h2><button className="link" onClick={() => copy('brief', text)}>{copied === 'brief' ? 'Copied' : 'Copy as markdown'}</button></div>
           <div className="ck-brief-md" dangerouslySetInnerHTML={{ __html: html }} />
+        </section>}
+
+        {d.projects.length > 0 && <section className="pv-sec ck-projects">
+          <div className="pv-sec-head"><h2>Projects</h2><small>{d.projects.length}</small>{scoped && <button className="link" onClick={() => onScope({})}>show all of {crumbs[0].label}</button>}</div>
+          <div className="ck-cards">{d.projects.map(p => {
+            const on = scope.project === p.project, name = nameOf(p.project);
+            return <div key={p.project} className={'ck-card' + (on ? ' on' : '')}>
+              <button className="ck-card-main" onClick={() => onScope(on && !scope.component ? {} : { project: p.project })} aria-pressed={on} title={on && !scope.component ? 'Back to the whole customer' : `Scope the cockpit to ${name}`}>
+                <span className="ck-card-head"><b>{name}</b>{p.status && <span className={'ck-status s-' + p.status}>{p.status.replace(/-/g, ' ')}</span>}</span>
+                <span className="ck-facts"><span>{p.count} notes</span><span>{p.tasks} open {p.tasks === 1 ? 'task' : 'tasks'}</span><span>active {ago(p.mtime)}</span></span>
+                <span className="ck-meet">{p.meeting ? <>Latest meeting: {shortTitle(p.meeting.title)} <small>{d.dateOf(p.meeting)}</small></> : 'No meeting notes'}</span>
+              </button>
+              {p.components.length > 0 && <div className="ck-comps">{p.components.map(([k, n]) => {
+                const con = on && scope.component === k;
+                return <button key={k} className={'chip' + (con ? ' active' : '')} aria-pressed={con} onClick={() => onScope(con ? { project: p.project } : { project: p.project, component: k })} title={con ? `Back to ${name}` : `Scope the cockpit to this component`}>{nameOf(p.project, k)} <small>{n}</small></button>;
+              })}</div>}
+              <button className="link ck-weekly" onClick={() => copy('w-' + p.project, weeklyPrompt(`${label} ${name}`, ticketFor(p.hub, p.notes), p.notes))} title="Copy a /fde-weekly-jira-update prompt for this project">{copied === 'w-' + p.project ? 'copied' : 'weekly update'}</button>
+            </div>;
+          })}</div>
         </section>}
 
         <div className="ck-grid">
@@ -94,14 +118,6 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
           </section>
 
           <section className="pv-sec">
-            <div className="pv-sec-head"><h2>Projects</h2><small>{d.projects.length}</small></div>
-            {d.projects.length ? <ul className="pv-notes">{d.projects.map(p => <li key={p.project}>
-              <button onClick={() => onSelect((p.hub ?? p.newest).id)}><b>{pretty(p.project)}</b><span>{p.count} notes · latest: {shortTitle(p.newest.title)} ({ago(p.newest.mtime)})</span></button>
-              <button className="link ck-weekly" onClick={() => copy('w-' + p.project, weeklyPrompt(`${label} ${pretty(p.project)}`, ticketFor(p.hub, p.notes), p.notes))} title="Copy a /fde-weekly-jira-update prompt for this project">{copied === 'w-' + p.project ? 'copied' : 'weekly update'}</button>
-            </li>)}</ul> : <div className="pv-empty">No notes with a <code>project:</code> field.</div>}
-          </section>
-
-          <section className="pv-sec">
             <div className="pv-sec-head"><h2>Recent meetings</h2><small>{d.meetings.length}</small></div>
             {d.meetings.length ? <ul className="pv-notes">{d.meetings.map(n => nlink(n, d.dateOf(n) + (n.summary ? ' · ' + n.summary : '')))}</ul> : <div className="pv-empty">No meeting notes (type: meeting).</div>}
           </section>
@@ -120,7 +136,7 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
           </section>
         </div>
 
-        {projectsOn && <section className="pv-sec">
+        {projectsOn && !scoped && <section className="pv-sec">
           <div className="pv-sec-head"><h2>Code projects</h2><small>{code.length}</small></div>
           {code.length ? <div className="rc-grid">{code.map(p => <ResumeCard key={p.path} p={p} />)}</div>
             : <div className="pv-empty">{list ? `No folder under the projects roots matches "${customer}". Map folders in config.json under projects.customers.` : 'Reading project files...'}</div>}
