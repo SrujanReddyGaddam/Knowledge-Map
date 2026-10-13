@@ -96,15 +96,15 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
               <div className="ck-card-head"><b>{name}</b>{p.status && <span className={'ck-status s-' + p.status}>{p.status.replace(/-/g, ' ')}</span>}</div>
               <dl className="ck-rows">
                 <dt>Next step</dt>
-                <dd>{p.next ? <button className="ck-row" onClick={open(p.next.note.id)}>{txt(p.next)}{p.next.due && <small className="ck-due">due {p.next.due}</small>}<small>{shortTitle(p.next.note.title)}</small></button> : <span className="ck-none">No open tasks</span>}</dd>
+                <dd>{p.next ? <button className="ck-row" onClick={open(p.next.note.id)} title={txt(p.next)}><span className="ck-t c3">{txt(p.next)}</span>{p.next.due && <small className="ck-due">due {p.next.due}</small>}<small>{shortTitle(p.next.note.title)}</small></button> : <span className="ck-none">No open tasks</span>}</dd>
                 {(p.waiting.length > 0 || p.questions > 0) && <><dt>Waiting on</dt>
-                <dd>{p.waiting[0] ? <button className="ck-row" onClick={open(p.waiting[0].note.id)}>{txt(p.waiting[0])}<small>{[p.waiting.length > 1 && `+${p.waiting.length - 1} more`, p.questions > 0 && `${p.questions} open ${p.questions === 1 ? 'question' : 'questions'}`].filter(Boolean).join(' · ')}</small></button>
+                <dd>{p.waiting[0] ? <button className="ck-row" onClick={open(p.waiting[0].note.id)} title={txt(p.waiting[0])}><span className="ck-t c2">{txt(p.waiting[0])}</span><small>{[p.waiting.length > 1 && `+${p.waiting.length - 1} more`, p.questions > 0 && `${p.questions} open ${p.questions === 1 ? 'question' : 'questions'}`].filter(Boolean).join(' · ')}</small></button>
                   : <span className="ck-none">{p.questions} open {p.questions === 1 ? 'question' : 'questions'}</span>}</dd></>}
                 <dt>Last worked on</dt>
                 <dd>{p.worked ? <button className="ck-row" onClick={open(p.worked.id)}>{shortTitle(p.worked.title)}<small>{ago(p.mtime)}</small></button> : <span className="ck-none">no dated activity</span>}</dd>
                 {p.meeting && <><dt>Last meeting</dt>
                 <dd><button className="ck-row" onClick={open(p.meeting.id)}>{shortTitle(p.meeting.title)}<small>{d.dateOf(p.meeting)}</small></button>
-                  {dec.length > 0 && <ul className="ck-dec">{dec.map((x, i) => <li key={i}>{x}</li>)}</ul>}</dd></>}
+                  {dec.length > 0 && <ul className="ck-dec">{dec.map((x, i) => <li key={i} title={x}>{x}</li>)}</ul>}</dd></>}
               </dl>
               {p.components.length > 0 && <div className="ck-comps">{p.components.map(([k, n]) => {
                 const con = on && scope.component === k;
