@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import { forceSimulation, forceManyBody, forceLink, forceRadial, forceCollide } from 'd3-force-3d';
 import type { Note } from 'virtual:vault';
-import { shortTitle } from './util';
+import { shortTitle, wrapLabel } from './util';
 import type { Colors } from './palettes';
 
 type GNode = { id: string; note: Note; tx?: number; ty?: number; tz?: number; R0: number; show: number; showT: number; x: number; y: number; z: number; fx?: number | null; fy?: number | null; fz?: number | null; r: number; t: number; R: number; hov: number; dim: number; lab: number; sx: number; sy: number; sr: number; wz: number; front: number; p: [number, number, number]; ix: number; iy: number; iz: number; idl: number; ie: number };
@@ -104,9 +104,14 @@ export default function Graph(props: Props) {
 
     // labels (DOM overlay, positioned from projected node centres)
     const layer = document.createElement('div'); layer.className = 'labels'; host.appendChild(layer);
-    const els = nodes.map(n => {
+    // short titles shared by several notes (e.g. "X — part one", "X — part two") fall back to the full title
+    const shortCount = new Map<string, number>();
+    for (const n of nodes) { const s = shortTitle(n.note.title); shortCount.set(s, (shortCount.get(s) ?? 0) + 1); }
+    const labLines = nodes.map(n => { const s = shortTitle(n.note.title); return wrapLabel((shortCount.get(s)! > 1 ? n.note.title : s).toUpperCase()); });
+    const labCols = labLines.map(l => Math.max(...l.map(x => x.length)));
+    const els = nodes.map((n, i) => {
       const d = document.createElement('div'); d.className = 'node-label';
-      const t = shortTitle(n.note.title).toUpperCase(); d.textContent = t.length > 30 ? t.slice(0, 28) + '..' : t;
+      d.textContent = labLines[i].join('\n');
       layer.appendChild(d); return d;
     });
 
@@ -421,9 +426,9 @@ export default function Graph(props: Props) {
       const boxes: number[][] = [];
       const prio = [...nodes].sort((a, b) => (b.hov - a.hov) || (b.sr - a.sr));
       for (const n of prio) {
-        const el = els[nodes.indexOf(n)], forced = (n.hov > 0.3 || (pth ? pth.nodes.has(n.id) : focus && fnb!.has(n.id)) || n.id === selectedId) && n.show > 0.5;
+        const i = nodes.indexOf(n), el = els[i], forced = (n.hov > 0.3 || (pth ? pth.nodes.has(n.id) : focus && fnb!.has(n.id)) || n.id === selectedId) && n.show > 0.5;
         const size = Math.min(26, 7 + n.sr * 0.2) * (1 + n.hov * 0.1), cw = size * 0.62, tiny = n.sr < 7 && !(n.hov > 0.3 || n.id === selectedId);
-        const w = el.textContent!.length * cw + 6, h = size + 4, bx = n.sx - w / 2, by = n.sy - n.sr - 3 - h;
+        const w = labCols[i] * cw + 6, h = labLines[i].length * size * 1.12 + 4, bx = n.sx - w / 2, by = n.sy - n.sr - 3 - h;
         let ok = !tiny && n.show > 0.5 && (!!forced || n.sr > 5);
         if (ok && !forced && boxes.some(b => bx < b[0] + b[2] && bx + w > b[0] && by < b[1] + b[3] && by + h > b[1])) ok = false;
         if (ok) boxes.push([bx, by, w, h]);
