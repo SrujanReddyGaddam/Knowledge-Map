@@ -104,7 +104,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const [umDone, setUmDone] = useState<Set<string>>(() => new Set());
   const [umErr, setUmErr] = useState('');
   useEffect(() => { setUmOpen(false); setUmDone(new Set()); setUmErr(''); }, [note?.id]);
-  const crumbs = useMemo(() => (note ? crumbsFor([...byId.values()], scopeOf(note)) : []), [note, byId]);
+  const crumbs = useMemo(() => (note ? crumbsFor([...byId.values()], scopeOf(note)).filter(c => c.hub?.id !== note.id) : []), [note, byId]);
   const unlinked = useMemo(() => (umOpen && note ? unlinkedMentions(note, [...byId.values()]) : []), [umOpen, note, byId]);
   const linkMention = async (src: Note) => {
     if (!note) return; setUmErr('');

@@ -140,7 +140,7 @@ section { border-top:1px solid var(--line); margin-top:26px; padding-top:16px; }
 .vol input[type=range] { flex:1; accent-color:var(--accent); height:4px; } .vol b { min-width:24px; text-align:right; color:var(--ink); font-weight:500; }
 .p-head { gap:12px; }
 .crumbs { display:flex; align-items:center; min-width:0; white-space:nowrap; } .crumbs > span { display:inline-flex; align-items:center; min-width:0; }
-.crumb { all:unset; cursor:pointer; overflow:hidden; text-overflow:ellipsis; border-radius:4px; padding:1px 2px; } .crumb:hover { color:var(--ink); text-decoration:underline; text-underline-offset:3px; } .crumb:focus-visible { outline:2px solid var(--accent); }
+.crumb { all:unset; cursor:pointer; overflow:hidden; text-overflow:ellipsis; border-radius:4px; padding:1px 2px; } .crumb { text-decoration:underline; text-decoration-color:color-mix(in srgb, currentColor 35%, transparent); text-underline-offset:3px; } .crumb:hover { color:var(--ink); text-decoration-color:currentColor; } .crumb:focus-visible { outline:2px solid var(--accent); }
 .crumb-sep { margin:0 6px; opacity:.6; }
 .p-crumbs { flex-wrap:wrap; white-space:normal; row-gap:2px; margin:0 0 10px; } .p-crumbs > span, .p-crumbs .crumb { min-width:auto; overflow:visible; }
 @media print { .p-crumbs { display:none; } }
