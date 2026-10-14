@@ -44,7 +44,10 @@ export async function ensureDaily(v = dailyVault()) {
 
 // Quick capture: first line is the title, the rest the body. Returns the new note's path.
 export async function capture(text: string, v = dailyVault()) {
-  const lines = text.trim().split('\n'), title = lines[0].trim().slice(0, 120), rest = lines.slice(1).join('\n').trim();
+  // A first line longer than the title limit is cut at a word for the title and kept whole in the body, so nothing is lost.
+  const lines = text.trim().split('\n'), first = lines[0].trim(), cut = first.length > 120;
+  const title = cut ? first.slice(0, 120).replace(/\s+\S*$/, '') : first;
+  const rest = (cut ? text.trim() : lines.slice(1).join('\n').trim());
   const t = (await templates(v)).find(x => x.name === 'capture');
   let body = t ? fill(t.text, title) : `---\ntitle: ${JSON.stringify(title)}\ntype: capture\nsummary: \nsensitivity: internal\ntags: []\nstatus: draft\n---\n\n# ${title}\n`;
   body = withSummary(body, text.trim().replace(/\s+/g, ' ').slice(0, 160));
