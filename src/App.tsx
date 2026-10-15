@@ -27,6 +27,8 @@ import { useActivity, bulkOnly } from './activity';
 import { dailyNote, dailyPath, dailyVault, ensureDaily } from './journal';
 import { shortestPath } from './graphPath';
 import { contextPack } from './contextPack';
+import Circles from './Circles';
+import { isPerson } from './circlesData';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
 // same rules as the server: exact file name first ([[x.excalidraw]] is the drawing), then the name without .excalidraw, where a note beats a drawing
@@ -76,8 +78,9 @@ const customers = customersOf(vault.notes);
 const findNotes = (q: string) => (runSearch(searchIndex, q, 'names')?.hits ?? []).map(h => h.note);
 // a message that should survive the reload that follows our own write (e.g. "Captured")
 const toastAfterReload = (() => { try { const t = sessionStorage.getItem('kmToast'); sessionStorage.removeItem('kmToast'); return t || ''; } catch { return ''; } })();
-type View = 'tasks' | 'today' | 'cockpit' | 'week' | null;
-const VIEWS = ['tasks', 'today', 'cockpit', 'week'];
+type View = 'tasks' | 'today' | 'cockpit' | 'week' | 'circles' | null;
+const VIEWS = ['tasks', 'today', 'cockpit', 'week', 'circles'];
+const hasPeople = vault.notes.some(isPerson);
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
@@ -301,6 +304,7 @@ export default function App() {
     { id: 'week', label: 'Weekly review', hint: 'this week per customer, copy as markdown', keys: 'w', run: () => setView('week') },
     { id: 'tasks', label: 'Tasks', hint: 'every open checkbox', keys: 't', run: () => setView('tasks') },
     { id: 'cockpit', label: 'Customer cockpit', hint: 'pick a customer', keys: 'k', run: () => openCockpit(null) },
+    ...(hasPeople ? [{ id: 'circles', label: 'Circles', hint: 'friends and family, who to reach out to', keys: 'o', run: () => setView('circles') }] : []),
     ...customers.map(c => ({ id: 'ws-' + c, label: 'Workspace: ' + pretty(c), hint: 'this customer as the context', run: () => enterWorkspace(c) })),
     ...(workspace ? [{ id: 'ws-leave', label: 'Leave workspace', hint: pretty(workspace), keys: 'g', run: leaveWorkspace }] : []),
     ...customers.map(c => ({ id: 'ck-' + c, label: 'Cockpit: ' + c.replace(/-/g, ' '), hint: 'customer', run: () => openCockpit(c) })),
@@ -339,6 +343,7 @@ export default function App() {
       else if (e.key === 't') toggleView('tasks');
       else if (e.key === 'h') toggleView('today');
       else if (e.key === 'w') toggleView('week');
+      else if (e.key === 'o' && hasPeople) toggleView('circles');
       else if (e.key === 'k') { if (tasksRef.current === 'cockpit') setView(null); else openCockpit(workspaceRef.current || selNote?.customer || customer); }
       else if (e.key === 'g' && customers.length) { e.preventDefault(); if (workspaceRef.current) leaveWorkspace(); else setWsPick(true); }
       else if (e.key === 'c' && dailyVault() && !editIdRef.current && !safeMode) { e.preventDefault(); setCaptureOpen(true); }
@@ -390,6 +395,9 @@ export default function App() {
           </button>
           {customers.length > 0 && <button className={'icon-btn' + (view === 'cockpit' ? ' on' : '')} onClick={() => (view === 'cockpit' ? setView(null) : openCockpit(selNote?.customer || customer))} aria-label="Customer cockpit" title="Customer cockpit  (k)">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="M2.5 14V4.5l5-2.5v12M7.5 14V6.5l6 2.5v5M1.5 14h13M4.5 6.5v.01M4.5 9v.01M4.5 11.5v.01M10 10.5v.01M10 12.5v.01" strokeLinecap="round" /></svg>
+          </button>}
+          {hasPeople && <button className={'icon-btn' + (view === 'circles' ? ' on' : '')} onClick={() => toggleView('circles')} aria-label="Circles" title="Circles: friends and family, who to reach out to  (o)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="1.4" fill="currentColor" /><circle cx="8" cy="8" r="3.9" /><ellipse cx="8" cy="8" rx="6.5" ry="3" transform="rotate(-28 8 8)" /></svg>
           </button>}
           <button className={'icon-btn' + (tasksOpen ? ' on' : '')} onClick={() => toggleView('tasks')} aria-label="Tasks" title={`Tasks: ${allTasks.length} open checkboxes from all notes  (t)`}>
             {allTasks.length > 0 && <span className="count-badge">{allTasks.length > 99 ? '99+' : allTasks.length}</span>}
@@ -470,6 +478,7 @@ export default function App() {
       </div>}
  {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
  {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} />}
+ {view === 'circles' && <Circles notes={vault.notes} colors={colors} dark={dark} right={panelW} selected={selected} safe={safeMode} onSelect={id => select(id)} onClose={() => setView(null)} />}
  {view === 'week' && <Week right={panelW} notes={vault.notes} customers={customers} selected={selected} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} />}
  {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} scope={scopeNow} onScope={s => setCkScope({ customer: customer || '', ...s })} onCustomer={setCustomer} onSelect={select} onFacet={(f, v) => { setView(null); pickFacet(f, v); }} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}

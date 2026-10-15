@@ -503,3 +503,63 @@ button.link { all:unset; cursor:pointer; text-decoration:underline; text-underli
 .rq-open { all:unset; cursor:pointer; flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; } .rq-open b { font-weight:600; font-size:14px; } .rq-open:hover b { color:var(--accent); }
 .rq-open span { font-size:12.5px; color:var(--ink); opacity:.8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .rq-open small { font:10.5px var(--mono); color:var(--mute); }
 .rq-acts { display:flex; gap:6px; flex:none; } .rq-acts .btn { padding:5px 11px; font-size:12px; }
+
+/* ---- Round 27: Circles (friends and family on concentric shells) ---- */
+.ci-view { overflow:hidden; }
+.ci-stage { position:absolute; inset:0; cursor:grab; touch-action:none; user-select:none; }
+.ci-stage.dragging { cursor:grabbing; }
+.ci-canvas { position:absolute; inset:0; display:block; }
+.ci-head { position:absolute; left:0; right:0; top:0; padding:44px clamp(28px, 5vw, 96px) 0; pointer-events:none; z-index:2000; }
+.ci-head > * { pointer-events:auto; } .ci-head > div { pointer-events:none; }
+.ci-me, .ci-ring, .ci-dot { position:absolute; left:0; top:0; will-change:transform; }
+.ci-me { z-index:1000; pointer-events:none; }
+.ci-me i { position:absolute; left:-9px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--ink); box-shadow:0 0 0 6px color-mix(in srgb, var(--ink) 10%, transparent), 0 0 0 14px color-mix(in srgb, var(--ink) 5%, transparent); }
+.ci-me span { position:absolute; left:0; top:16px; transform:translateX(-50%); font:600 10.5px var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--ink); }
+.ci-ring { pointer-events:none; z-index:999; white-space:nowrap; font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); }
+.ci-ring { margin:-17px 0 0; translate:-50% 0; }
+.ci-ring small { font-size:9.5px; opacity:.7; letter-spacing:.06em; text-transform:none; }
+.ci-dot { all:unset; position:absolute; left:0; top:0; cursor:pointer; transform-origin:0 0; }
+.ci-ball { position:absolute; left:-8px; top:-8px; width:16px; height:16px; border-radius:50%; background:var(--fr); box-shadow:0 0 0 3px var(--bg); transition:transform .2s; }
+.ci-dot.family .ci-ball { background:var(--fam); }
+.ci-ball::after { content:''; position:absolute; inset:-6px; border-radius:50%; border:1.5px solid transparent; }
+.ci-dot.due .ci-ball::after { border:1.5px dashed color-mix(in srgb, var(--ink) 55%, transparent); }
+.ci-dot.never .ci-ball::after { border:1.5px dotted color-mix(in srgb, var(--mute) 80%, transparent); }
+.ci-dot.overdue .ci-ball::after { border-color:var(--ink); animation:ci-pulse 1.8s ease-out infinite; }
+@keyframes ci-pulse { 0% { transform:scale(.85); opacity:.9; } 100% { transform:scale(1.7); opacity:0; } }
+.ci-dot:hover .ci-ball { transform:scale(1.25); }
+.ci-dot.cur .ci-ball { transform:scale(1.35); box-shadow:0 0 0 3px var(--bg), 0 0 0 5.5px var(--accent); }
+.ci-name { position:absolute; left:14px; top:-8px; white-space:nowrap; font-size:12.5px; font-weight:600; letter-spacing:-.005em; color:var(--ink); text-shadow:0 0 3px var(--bg), 0 0 6px var(--bg); }
+.ci-dot.cur .ci-name { color:var(--accent); font-weight:750; }
+.ci-cake { position:absolute; left:-20px; top:-22px; font-style:normal; font-size:13px; }
+.ci-sw { display:inline-block; flex:none; width:9px; height:9px; border-radius:50%; background:var(--fr); } .ci-sw.family { background:var(--fam); }
+.ci-lg { display:inline-block; width:9px; height:9px; border-radius:50%; border:1.5px solid var(--ink); }
+.ci-lg.due { border-style:dashed; border-color:color-mix(in srgb, var(--ink) 55%, transparent); } .ci-lg.never { border-style:dotted; border-color:var(--mute); }
+.ci-side { position:absolute; z-index:2000; right:clamp(16px, 2.5vw, 36px); top:130px; width:270px; max-height:calc(100% - 160px); overflow:auto; scrollbar-width:thin; padding:14px 16px 12px; background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(6px); border:1px solid var(--line); border-radius:16px; }
+.ci-side h3 { margin:14px 0 2px; font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); font-weight:400; }
+.ci-side ul { margin:4px 0 0 !important; }
+.ci-side li button { all:unset; box-sizing:border-box; width:100%; cursor:pointer; display:grid; grid-template-columns:auto 1fr; column-gap:8px; align-items:center; padding:5px 6px; margin:0 -6px; border-radius:8px; }
+.ci-side li button:hover, .ci-side li.cur button { background:var(--soft); }
+.ci-side li b { font-size:13px; font-weight:650; } .ci-side li span { grid-column:2; font:10.5px var(--mono); color:var(--mute); }
+.ci-legend { display:flex; flex-wrap:wrap; gap:6px 12px; font:10.5px var(--mono); color:var(--mute); }
+.ci-legend span { display:inline-flex; align-items:center; gap:5px; }
+.ci-none { margin:6px 0 0; font:10.5px var(--mono); color:var(--mute); }
+.ci-empty { position:absolute; left:50%; top:45%; transform:translate(-50%, -50%); max-width:460px; text-align:center; }
+.ci-card { position:absolute; z-index:2000; left:clamp(16px, 2.5vw, 36px); bottom:24px; width:min(380px, calc(100% - 32px)); padding:14px 16px; background:color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter:blur(6px); border:1px solid var(--line); border-left:3px solid var(--fr); border-radius:16px; animation:fade .2s ease; }
+.ci-card.family { border-left-color:var(--fam); }
+.ci-card-head { display:flex; align-items:center; gap:8px; } .ci-card-head b { font-size:16px; letter-spacing:-.01em; } .ci-card-head span { font:10.5px var(--mono); color:var(--mute); }
+.ci-circle { display:flex; gap:4px; margin:10px 0 8px; }
+.ci-circle button { all:unset; cursor:pointer; flex:1; text-align:center; padding:4px 0; border:1px solid var(--line); border-radius:999px; font:10px var(--mono); color:var(--mute); }
+.ci-circle button.on { color:var(--ink); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.ci-circle button:hover:not(:disabled) { border-color:var(--accent); } .ci-circle button:disabled:not(.on) { opacity:.5; cursor:default; }
+.ci-card dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0; font-size:12.5px; }
+.ci-card dt { font:10px var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--mute); padding-top:2px; }
+.ci-card dd { margin:0; } .ci-card dd small { display:block; color:var(--mute); font-size:11.5px; } .ci-card dd.overdue { color:#b3392b; }
+.ci-log { display:grid; grid-template-columns:auto 1fr auto; gap:6px; margin-top:10px; }
+.ci-log input, .ci-log select { all:unset; box-sizing:border-box; padding:6px 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); font-size:12.5px; min-width:0; }
+.ci-log select { cursor:pointer; font:11px var(--mono); } .ci-log input[type=date] { font:11px var(--mono); grid-column:2 / 4; }
+.ci-log input:focus, .ci-log select:focus { border-color:var(--accent); }
+.ci-log input:not([type]) { grid-column:1 / 3; }
+.ci-log button { all:unset; cursor:pointer; padding:6px 14px; border-radius:10px; background:var(--accent); color:var(--panel); font:600 12px var(--mono); }
+.ci-log button:disabled { opacity:.4; cursor:default; }
+.ci-done { margin:8px 0 0; font:10.5px var(--mono); color:var(--accent); }
+@media (max-width:800px) { .ci-side { top:auto; bottom:12px; right:12px; left:12px; width:auto; max-height:34%; } .ci-card { bottom:auto; top:140px; } }
