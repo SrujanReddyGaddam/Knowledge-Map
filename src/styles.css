@@ -636,3 +636,8 @@ button.link { all:unset; cursor:pointer; text-decoration:underline; text-underli
 .ap-more { align-self:flex-start; font-size:12px; }
 .ap textarea.rn-input { resize:vertical; font-family:inherit; }
 @media (max-width:560px) { .ap-circles, .ap-two, .pp-grid { grid-template-columns:1fr 1fr; } }
+.date-field { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+.date-field input[type=date] { flex:1 1 150px; font-family:var(--mono); }
+.date-noyear { display:inline-flex !important; flex-direction:row !important; align-items:center; gap:5px; font:10.5px var(--mono); color:var(--mute); cursor:pointer; }
+.date-noyear input { all:revert; margin:0; }
+.date-field small { flex-basis:100%; font:10.5px var(--mono); color:var(--accent); }

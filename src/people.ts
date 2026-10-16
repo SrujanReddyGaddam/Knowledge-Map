@@ -89,3 +89,11 @@ export function yamlValue(v: string) {
   return /^[\w .,'()/@+-]+$/.test(s) && !/^[-?:,[\]{}#&*!|>'"%@`]/.test(s) && !/:\s|\s#/.test(s) && !/^(true|false|null|yes|no|~)$/i.test(s) ? s : JSON.stringify(s);
 }
 export const yamlList = (v: string) => '[' + v.split(',').map(x => x.trim()).filter(Boolean).map(x => yamlValue(x).replace(/^([^"].*[,\]].*)$/, '"$1"')).join(', ') + ']';
+
+// display a stored date (YYYY-MM-DD, or MM-DD when the year is unknown) as "June 4, 1992" / "June 4"
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+export function fmtDate(s: string) {
+  const m = (s || '').trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})$/);
+  if (!m || +m[2] < 1 || +m[2] > 12) return s;
+  return `${MONTHS[+m[2] - 1]} ${+m[3]}${m[1] ? ', ' + m[1] : ''}`;
+}

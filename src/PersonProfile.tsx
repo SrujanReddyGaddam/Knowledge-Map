@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { Note } from 'virtual:vault';
 import vault from './data';
 import { personOf, logLines, RINGS, RELATIONS, agoText, today, type Relation } from './circlesData';
-import { PROFILE_FIELDS, RELATIONSHIPS, age, asks, datedItems, journalContacts, nextYearly, yamlValue, yamlList } from './people';
+import { PROFILE_FIELDS, RELATIONSHIPS, age, asks, datedItems, journalContacts, nextYearly, yamlValue, yamlList, fmtDate } from './people';
 import { appendLine, rawNote, saveNote } from './api';
 import { setFrontmatter } from './review';
 
@@ -65,8 +65,8 @@ export default function PersonProfile({ note, canWrite, resolve, onNav }: Props)
     return t ? <button className="link" onClick={() => onNav(t.id)}>{w![2] || t.title}</button> : <>{v.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, x, y) => y || x)}</>;
   };
   const facts: [string, ReactNode][] = [];
-  if (m.birthday) facts.push(['Birthday', <>{m.birthday}{a !== null && <> · {a} years</>}{p.bdayIn !== null && p.bdayIn <= 60 && <small>{when(p.bdayIn, 'birthday', p.turns, '')}</small>}</>]);
-  if (m.anniversary) facts.push(['Anniversary', <>{m.anniversary}{ann && ann.days <= 60 && <small>{when(ann.days, 'anniversary', ann.count, ' years')}</small>}</>]);
+  if (m.birthday) facts.push(['Birthday', <>{fmtDate(m.birthday)}{a !== null && <> · {a} years</>}{p.bdayIn !== null && p.bdayIn <= 60 && <small>{when(p.bdayIn, 'birthday', p.turns, '')}</small>}</>]);
+  if (m.anniversary) facts.push(['Anniversary', <>{fmtDate(m.anniversary)}{ann && ann.days <= 60 && <small>{when(ann.days, 'anniversary', ann.count, ' years')}</small>}</>]);
   if (m.location) facts.push(['Lives in', m.location]);
   if (m.hometown) facts.push(['Hometown', m.hometown]);
   if (m.role || m.company) facts.push(['Work', [m.role, m.company].filter(Boolean).join(' at ')]);
@@ -103,10 +103,10 @@ export default function PersonProfile({ note, canWrite, resolve, onNav }: Props)
 
       <div className="pp-brief">
         <div className="label">Before you call</div>
-        <p className={'pp-last ' + p.status}>Last contact {agoText(p.since)}{p.last && ` (${p.last}${p.lastKind ? ', ' + p.lastKind : ''})`} · {ring.label.toLowerCase()}, {isFinite(p.every) ? `every ${p.every} days` : 'no check-in rhythm'}{p.status === 'overdue' && p.since !== null ? `, ${p.since - p.every} days late` : ''}</p>
+        <p className={'pp-last ' + p.status}>Last contact {agoText(p.since)}{p.last && ` (${fmtDate(p.last)}${p.lastKind ? ', ' + p.lastKind : ''})`} · {ring.label.toLowerCase()}, {isFinite(p.every) ? `every ${p.every} days` : 'no check-in rhythm'}{p.status === 'overdue' && p.since !== null ? `, ${p.since - p.every} days late` : ''}</p>
         {open.length > 0 && <><h4>Ask about</h4><ul>{open.map((x, i) => <li key={i}>{x}</li>)}</ul></>}
-        {logs.length > 0 && <><h4>Recent</h4><ul>{logs.map((l, i) => <li key={i}><small>{l.date}{l.kind && ' ' + l.kind}</small> {l.text}</li>)}</ul></>}
-        {remember.length > 0 && <><h4>Worth remembering</h4><ul>{remember.map((l, i) => <li key={i}>{l.date && <small>{l.date}</small>} {l.text}</li>)}</ul></>}
+        {logs.length > 0 && <><h4>Recent</h4><ul>{logs.map((l, i) => <li key={i}><small>{fmtDate(l.date)}{l.kind && ', ' + l.kind}</small> {l.text}</li>)}</ul></>}
+        {remember.length > 0 && <><h4>Worth remembering</h4><ul>{remember.map((l, i) => <li key={i}>{l.date && <small>{fmtDate(l.date)}</small>} {l.text}</li>)}</ul></>}
       </div>
 
       {canWrite && !editing && <QuickAdd busy={busy} onAdd={add} />}
@@ -173,7 +173,7 @@ function EditProfile({ note, busy, onCancel, onSave }: { note: Note; busy: boole
       </div>
       {groups.map(([g, title]) => <fieldset key={g}><legend>{title}</legend><div className="pp-grid">
         {PROFILE_FIELDS.filter(f => f.group === g).map(f => <label key={f.key} className={f.key === 'address' || f.key === 'interests' || f.key === 'kids' ? 'wide' : ''}>{f.label}
-          <input type={f.kind === 'email' ? 'email' : f.kind === 'tel' ? 'tel' : f.kind === 'url' ? 'url' : 'text'} inputMode={f.kind === 'number' ? 'numeric' : undefined} value={v[f.key]} onChange={e => set(f.key, e.target.value)} placeholder={f.hint || ''} /></label>)}
+          {f.kind === 'date' ? <DateField value={v[f.key]} onChange={x => set(f.key, x)} /> : <input type={f.kind === 'email' ? 'email' : f.kind === 'tel' ? 'tel' : f.kind === 'url' ? 'url' : 'text'} inputMode={f.kind === 'number' ? 'numeric' : undefined} value={v[f.key]} onChange={e => set(f.key, e.target.value)} placeholder={f.hint || ''} />}</label>)}
       </div></fieldset>)}
       {bad && <p className="tv-err">{bad}</p>}
       <div className="pp-actions"><button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving' : 'Save profile'}</button><button type="button" className="btn" onClick={onCancel}>Cancel</button></div>
@@ -187,5 +187,19 @@ export function RelationPicker({ value, onChange }: { value: Relation; onChange:
       {RELATIONS.map(r => <button type="button" key={r.key} role="radio" aria-checked={value === r.key} className={'rel-' + r.key + (value === r.key ? ' on' : '')} onClick={() => onChange(r.key)}>
         <i className={'ci-sw rel-' + r.key} />{r.label.replace(/s$/, '')}</button>)}
     </div>
+  );
+}
+
+// calendar picker for a yearly date; "Year unknown" stores MM-DD (the picker still needs a year, 2000 is used while it is ticked)
+export function DateField({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
+  const noYear = /^\d{1,2}-\d{1,2}$/.test(value.trim());
+  const pad = (x: string) => x.padStart(2, '0');
+  const iso = (() => { const m = value.trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})$/); return m ? `${m[1] || '2000'}-${pad(m[2])}-${pad(m[3])}` : ''; })();
+  return (
+    <span className="date-field">
+      <input type="date" className={className} value={iso} onChange={e => { const x = e.target.value; onChange(!x ? '' : noYear ? x.slice(5) : x); }} />
+      <label className="date-noyear"><input type="checkbox" checked={noYear} disabled={!iso} onChange={e => onChange(e.target.checked ? iso.slice(5) : iso)} />Year unknown</label>
+      {iso && <small>{fmtDate(value)}</small>}
+    </span>
   );
 }

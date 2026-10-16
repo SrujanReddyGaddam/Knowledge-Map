@@ -3,7 +3,7 @@ import vault from './data';
 import { createNote } from './api';
 import { RINGS, isPerson, type Relation } from './circlesData';
 import { RELATIONSHIPS, slugify, yamlValue } from './people';
-import { RelationPicker } from './PersonProfile';
+import { RelationPicker, DateField } from './PersonProfile';
 
 // Add person (key a, Circles + button, palette): one short form that classifies the person (who they are, how close)
 // and writes a full people/<name>.md profile in the vault that already holds people (else the first writable vault).
@@ -110,7 +110,7 @@ export default function AddPerson({ onClose }: Props) {
         <div className="rn-label">How close
           <div className="ap-circles">{RINGS.map(r => <button type="button" key={r.n} className={f.circle === String(r.n) ? 'on' : ''} onClick={() => { set('circle', String(r.n)); setCircleTouched(true); }}><b>{r.n} {r.label}</b><small>check in every {r.every}d</small></button>)}</div></div>
         <div className="ap-two">
-          <label className="rn-label">Birthday<input className="rn-input" value={f.birthday} onChange={e => set('birthday', e.target.value)} placeholder="1992-03-14 or 03-14" /></label>
+          <div className="rn-label">Birthday<DateField className="rn-input" value={f.birthday} onChange={v => set('birthday', v)} /></div>
           <label className="rn-label">Lives in<input className="rn-input" value={f.location} onChange={e => set('location', e.target.value)} placeholder="City, state" /></label>
         </div>
         {!more && <button type="button" className="link ap-more" onClick={() => setMore(true)}>More: work, phone, email, how you met, a first note</button>}
