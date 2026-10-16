@@ -509,18 +509,23 @@ button.link { all:unset; cursor:pointer; text-decoration:underline; text-underli
 .ci-stage { position:absolute; inset:0; cursor:grab; touch-action:none; user-select:none; }
 .ci-stage.dragging { cursor:grabbing; }
 .ci-canvas { position:absolute; inset:0; display:block; }
-.ci-head { position:absolute; left:0; right:0; top:0; padding:44px clamp(28px, 5vw, 96px) 0; pointer-events:none; z-index:2000; }
+.ci-head { position:absolute; left:0; right:0; top:0; padding:44px clamp(28px, 5vw, 96px) 0; pointer-events:none; z-index:3000; }
 .ci-head > * { pointer-events:auto; } .ci-head > div { pointer-events:none; }
 .ci-me, .ci-ring, .ci-dot { position:absolute; left:0; top:0; will-change:transform; }
-.ci-me { z-index:1000; pointer-events:none; }
+.ci-me { z-index:250; pointer-events:none; }
 .ci-me i { position:absolute; left:-9px; top:-9px; width:18px; height:18px; border-radius:50%; background:var(--ink); box-shadow:0 0 0 6px color-mix(in srgb, var(--ink) 10%, transparent), 0 0 0 14px color-mix(in srgb, var(--ink) 5%, transparent); }
 .ci-me span { position:absolute; left:0; top:16px; transform:translateX(-50%); font:600 10.5px var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--ink); }
-.ci-ring { pointer-events:none; z-index:999; white-space:nowrap; font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); }
+.ci-ring { pointer-events:none; z-index:249; white-space:nowrap; font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); }
 .ci-ring { margin:-17px 0 0; translate:-50% 0; }
 .ci-ring small { font-size:9.5px; opacity:.7; letter-spacing:.06em; text-transform:none; }
-.ci-dot { all:unset; position:absolute; left:0; top:0; cursor:pointer; transform-origin:0 0; }
-.ci-ball { position:absolute; left:-8px; top:-8px; width:16px; height:16px; border-radius:50%; background:var(--fr); box-shadow:0 0 0 3px var(--bg); transition:transform .2s; }
-.ci-dot.family .ci-ball { background:var(--fam); }
+.ci-dot { all:unset; position:absolute; left:0; top:0; cursor:pointer; transform-origin:0 0; will-change:transform; }
+.ci-ball { position:absolute; left:-8px; top:-8px; width:16px; height:16px; box-sizing:border-box; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--bg); transition:transform .2s; }
+.rel-family { --c:var(--family); } .rel-friend { --c:var(--friend); } .rel-colleague { --c:var(--colleague); } .rel-ex-colleague { --c:var(--ex-colleague); } .rel-acquaintance { --c:var(--acquaintance); }
+/* shape says who: circle family/friend, rounded square work (hollow = ex-colleague), small hollow circle acquaintance */
+.ci-dot.rel-colleague .ci-ball, .ci-dot.rel-ex-colleague .ci-ball { border-radius:4px; }
+.ci-dot.rel-ex-colleague .ci-ball { background:var(--bg); border:3px solid var(--c); }
+.ci-dot.rel-acquaintance .ci-ball { left:-6px; top:-6px; width:12px; height:12px; background:var(--bg); border:2.5px solid var(--c); }
+.ci-dot.rel-colleague .ci-ball::after, .ci-dot.rel-ex-colleague .ci-ball::after { border-radius:7px; }
 .ci-ball::after { content:''; position:absolute; inset:-6px; border-radius:50%; border:1.5px solid transparent; }
 .ci-dot.due .ci-ball::after { border:1.5px dashed color-mix(in srgb, var(--ink) 55%, transparent); }
 .ci-dot.never .ci-ball::after { border:1.5px dotted color-mix(in srgb, var(--mute) 80%, transparent); }
@@ -528,24 +533,42 @@ button.link { all:unset; cursor:pointer; text-decoration:underline; text-underli
 @keyframes ci-pulse { 0% { transform:scale(.85); opacity:.9; } 100% { transform:scale(1.7); opacity:0; } }
 .ci-dot:hover .ci-ball { transform:scale(1.25); }
 .ci-dot.cur .ci-ball { transform:scale(1.35); box-shadow:0 0 0 3px var(--bg), 0 0 0 5.5px var(--accent); }
-.ci-name { position:absolute; left:14px; top:-8px; white-space:nowrap; font-size:12.5px; font-weight:600; letter-spacing:-.005em; color:var(--ink); text-shadow:0 0 3px var(--bg), 0 0 6px var(--bg); }
+.ci-dot.nl .ci-name, .ci-dot.nl .ci-cake { opacity:0; }
+.ci-name { transition:opacity .15s; position:absolute; left:14px; top:-8px; white-space:nowrap; font-size:12.5px; font-weight:600; letter-spacing:-.005em; color:var(--ink); text-shadow:0 0 3px var(--bg); }
+.ci-dot.lf .ci-name { left:auto; right:14px; }
 .ci-dot.cur .ci-name { color:var(--accent); font-weight:750; }
 .ci-cake { position:absolute; left:-20px; top:-22px; font-style:normal; font-size:13px; }
-.ci-sw { display:inline-block; flex:none; width:9px; height:9px; border-radius:50%; background:var(--fr); } .ci-sw.family { background:var(--fam); }
+.ci-sw { display:inline-block; flex:none; width:9px; height:9px; box-sizing:border-box; border-radius:50%; background:var(--c); }
+.ci-sw.rel-colleague, .ci-sw.rel-ex-colleague { border-radius:2.5px; } .ci-sw.rel-ex-colleague, .ci-sw.rel-acquaintance { background:transparent; border:2px solid var(--c); }
 .ci-lg { display:inline-block; width:9px; height:9px; border-radius:50%; border:1.5px solid var(--ink); }
 .ci-lg.due { border-style:dashed; border-color:color-mix(in srgb, var(--ink) 55%, transparent); } .ci-lg.never { border-style:dotted; border-color:var(--mute); }
-.ci-side { position:absolute; z-index:2000; right:clamp(16px, 2.5vw, 36px); top:130px; width:270px; max-height:calc(100% - 160px); overflow:auto; scrollbar-width:thin; padding:14px 16px 12px; background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(6px); border:1px solid var(--line); border-radius:16px; }
-.ci-side h3 { margin:14px 0 2px; font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); font-weight:400; }
+.ci-side { position:absolute; z-index:3000; right:clamp(16px, 2.5vw, 36px); top:110px; bottom:24px; width:290px; display:flex; flex-direction:column; box-sizing:border-box; padding:14px 16px 12px; background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(6px); border:1px solid var(--line); border-radius:16px; }
+.ci-side h3 small { opacity:.7; }
+.ci-side h3 { margin:12px 0 2px; font:10px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--mute); font-weight:400; }
 .ci-side ul { margin:4px 0 0 !important; }
 .ci-side li button { all:unset; box-sizing:border-box; width:100%; cursor:pointer; display:grid; grid-template-columns:auto 1fr; column-gap:8px; align-items:center; padding:5px 6px; margin:0 -6px; border-radius:8px; }
 .ci-side li button:hover, .ci-side li.cur button { background:var(--soft); }
 .ci-side li b { font-size:13px; font-weight:650; } .ci-side li span { grid-column:2; font:10.5px var(--mono); color:var(--mute); }
+.ci-tabs { display:flex; gap:4px; }
+.ci-tabs button { all:unset; cursor:pointer; flex:1; text-align:center; padding:5px 0; border-radius:999px; font:10.5px var(--mono); color:var(--mute); border:1px solid transparent; }
+.ci-tabs button small { opacity:.7; } .ci-tabs button:hover { color:var(--ink); }
+.ci-tabs button.on { color:var(--ink); border-color:color-mix(in srgb, var(--accent) 55%, var(--line)); background:color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+.ci-q { all:unset; box-sizing:border-box; width:100%; margin:10px 0 4px; padding:7px 12px; border:1px solid var(--line); border-radius:999px; background:var(--panel); font-size:12.5px; }
+.ci-q:focus { border-color:var(--accent); }
+.ci-list { flex:1; min-height:0; overflow:auto; scrollbar-width:thin; margin:0 -6px; padding:0 6px; }
+.ci-side .ci-legend { margin-top:10px; padding-top:8px; border-top:1px solid var(--line); }
+.ci-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; pointer-events:auto; max-width:min(560px, 60vw); }
+.ci-chips button { all:unset; cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border:1px solid var(--line); border-radius:999px; background:color-mix(in srgb, var(--panel) 85%, transparent); font:10.5px var(--mono); color:var(--ink); transition:all .15s; }
+.ci-chips button small { color:var(--mute); } .ci-chips button:hover { border-color:var(--accent); }
+.ci-chips button.off { color:var(--mute); text-decoration:line-through; opacity:.6; }
 .ci-legend { display:flex; flex-wrap:wrap; gap:6px 12px; font:10.5px var(--mono); color:var(--mute); }
 .ci-legend span { display:inline-flex; align-items:center; gap:5px; }
 .ci-none { margin:6px 0 0; font:10.5px var(--mono); color:var(--mute); }
 .ci-empty { position:absolute; left:50%; top:45%; transform:translate(-50%, -50%); max-width:460px; text-align:center; }
-.ci-card { position:absolute; z-index:2000; left:clamp(16px, 2.5vw, 36px); bottom:24px; width:min(380px, calc(100% - 32px)); padding:14px 16px; background:color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter:blur(6px); border:1px solid var(--line); border-left:3px solid var(--fr); border-radius:16px; animation:fade .2s ease; }
-.ci-card.family { border-left-color:var(--fam); }
+.ci-card { position:absolute; z-index:3000; left:clamp(16px, 2.5vw, 36px); bottom:24px; width:min(380px, calc(100% - 32px)); padding:14px 16px; background:color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter:blur(6px); border:1px solid var(--line); border-left:3px solid var(--c); border-radius:16px; animation:fade .2s ease; }
+.ci-x { all:unset; cursor:pointer; margin-left:auto; padding:0 4px; font-size:18px; line-height:1; color:var(--mute); } .ci-x:hover { color:var(--ink); }
+.ci-view { container-type:size; }
+@container (max-width:1050px) { .ci-view.has-card .ci-side { display:none; } }
 .ci-card-head { display:flex; align-items:center; gap:8px; } .ci-card-head b { font-size:16px; letter-spacing:-.01em; } .ci-card-head span { font:10.5px var(--mono); color:var(--mute); }
 .ci-circle { display:flex; gap:4px; margin:10px 0 8px; }
 .ci-circle button { all:unset; cursor:pointer; flex:1; text-align:center; padding:4px 0; border:1px solid var(--line); border-radius:999px; font:10px var(--mono); color:var(--mute); }
@@ -562,4 +585,4 @@ button.link { all:unset; cursor:pointer; text-decoration:underline; text-underli
 .ci-log button { all:unset; cursor:pointer; padding:6px 14px; border-radius:10px; background:var(--accent); color:var(--panel); font:600 12px var(--mono); }
 .ci-log button:disabled { opacity:.4; cursor:default; }
 .ci-done { margin:8px 0 0; font:10.5px var(--mono); color:var(--accent); }
-@media (max-width:800px) { .ci-side { top:auto; bottom:12px; right:12px; left:12px; width:auto; max-height:34%; } .ci-card { bottom:auto; top:140px; } }
+@media (max-width:800px) { .ci-side { top:auto; bottom:12px; right:12px; left:12px; width:auto; height:36%; } .ci-card { bottom:auto; top:170px; } .ci-chips { max-width:none; } }

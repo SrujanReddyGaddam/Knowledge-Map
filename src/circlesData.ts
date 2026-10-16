@@ -10,8 +10,23 @@ export const RINGS = [
   { n: 4, label: 'Wider', every: 90 },
 ];
 export type Status = 'fresh' | 'due' | 'overdue' | 'never';
+// who the person is (color and shape); independent of the circle, which says how close they are
+export const RELATIONS = [
+  { key: 'family', label: 'Family' },
+  { key: 'friend', label: 'Friends' },
+  { key: 'colleague', label: 'Colleagues' },
+  { key: 'ex-colleague', label: 'Ex-colleagues' },
+  { key: 'acquaintance', label: 'Acquaintances' },
+] as const;
+export type Relation = typeof RELATIONS[number]['key'];
+const ALIAS: Record<string, Relation> = { work: 'colleague', coworker: 'colleague', 'co-worker': 'colleague', excolleague: 'ex-colleague', 'former-colleague': 'ex-colleague', other: 'acquaintance', friends: 'friend' };
+export function relationOf(v: string | undefined): Relation | null {
+  const k = (v || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return RELATIONS.some(r => r.key === k) ? k as Relation : ALIAS[k] ?? null;
+}
+export const relOrder = (r: Relation) => RELATIONS.findIndex(x => x.key === r);
 export type Person = {
-  note: Note; name: string; relation: 'family' | 'friend'; relationship: string; circle: number; every: number;
+  note: Note; name: string; relation: Relation; relationship: string; circle: number; every: number;
   last: string | null; lastKind: string; lastText: string; since: number | null; status: Status; urgency: number;
   birthday: string; bdayIn: number | null; turns: number | null; logs: number;
 };
@@ -49,7 +64,7 @@ export function nextBirthday(s: string, now = Date.now()) {
   return { days: Math.round((at - t0) / DAY), turns: m[1] ? year - +m[1] : null };
 }
 
-export function isPerson(n: Note) { return n.type === 'person' && (n.meta.relation === 'family' || n.meta.relation === 'friend'); }
+export function isPerson(n: Note) { return n.type === 'person' && relationOf(n.meta.relation) !== null; }
 
 export function personOf(n: Note, now = Date.now()): Person {
   const circle = Math.min(4, Math.max(1, parseInt(n.meta.circle, 10) || 3));
@@ -61,14 +76,14 @@ export function personOf(n: Note, now = Date.now()): Person {
   const status: Status = since === null ? 'never' : ratio > 1 ? 'overdue' : ratio >= 0.75 ? 'due' : 'fresh';
   const b = n.meta.birthday ? nextBirthday(n.meta.birthday, now) : null;
   return {
-    note: n, name: n.title, relation: n.meta.relation as 'family' | 'friend', relationship: n.meta.relationship || '', circle, every,
+    note: n, name: n.title, relation: relationOf(n.meta.relation)!, relationship: n.meta.relationship || '', circle, every,
     last: last?.date ?? null, lastKind: last?.kind ?? '', lastText: last?.text ?? '', since, status, urgency: ratio,
     birthday: n.meta.birthday || '', bdayIn: b?.days ?? null, turns: b?.turns ?? null, logs: logs.length,
   };
 }
 
 export function circlesData(notes: Note[], now = Date.now()) {
-  const people = notes.filter(isPerson).map(n => personOf(n, now)).sort((a, b) => a.circle - b.circle || a.name.localeCompare(b.name));
+  const people = notes.filter(isPerson).map(n => personOf(n, now)).sort((a, b) => a.circle - b.circle || relOrder(a.relation) - relOrder(b.relation) || a.name.localeCompare(b.name));
   // who to reach out to: overdue first (most overdue relative to their rhythm), then never logged by closeness, then due soon
   const rank = (p: Person) => (p.status === 'overdue' ? 3 : p.status === 'never' ? 2 : p.status === 'due' ? 1 : 0);
   const reach = people.filter(p => p.status !== 'fresh').sort((a, b) => rank(b) - rank(a) || b.urgency - a.urgency || a.circle - b.circle || a.name.localeCompare(b.name));
