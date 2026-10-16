@@ -28,6 +28,7 @@ import { dailyNote, dailyPath, dailyVault, ensureDaily } from './journal';
 import { shortestPath } from './graphPath';
 import { contextPack } from './contextPack';
 import Circles from './Circles';
+import AddPerson, { peopleVault } from './AddPerson';
 import { isPerson } from './circlesData';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
@@ -58,11 +59,13 @@ const lintIssues = (() => {
   return m;
 })();
 // a note just created with New note: open it (in the editor) after the reload
+let openView = false;
 const justCreated = (() => {
   try {
     const j = JSON.parse(sessionStorage.getItem('kmOpen') || 'null'); sessionStorage.removeItem('kmOpen');
     const id = j ? vault.notes.find(n => n.vault === j.vault && n.path === j.path)?.id ?? null : null;
     if (id) history.replaceState(null, '', location.pathname + location.search + '#' + encodeURIComponent(id));
+    openView = !!j?.view;   // Add person opens the new note to read, New note opens it in the editor
     return id;
   } catch { return null; }
 })();
@@ -88,7 +91,7 @@ export default function App() {
   const [draft] = useState<Draft | null>(() => { const d = readDraft(); const n = d && byId.get(d.id); return d && n && n.writable && (hashId() === null || hashId() === d.id) ? d : null; });
   const draftRef = useRef<Draft | null>(draft);                  // handed to the editor once; cleared when editing ends so a later edit starts from disk
   const [selected, setSelected] = useState<string | null>(() => justCreated ?? hashId() ?? draft?.id ?? null);
-  const [editId, setEditId] = useState<string | null>(justCreated && byId.get(justCreated)?.writable ? justCreated : draft?.id ?? null);
+  const [editId, setEditId] = useState<string | null>(justCreated && !openView && byId.get(justCreated)?.writable ? justCreated : draft?.id ?? null);
   const editIdRef = useRef(editId); editIdRef.current = editId;
   const dirtyRef = useRef(false), staleRef = useRef(false);      // dirtyRef: unsaved edits; staleRef: our own save happened, data refreshes when editing ends
   const reloadSoon = () => setTimeout(() => location.reload(), 50);
@@ -110,6 +113,7 @@ export default function App() {
   const cycleColor = () => setColorBy(c => (c === 'none' ? 'type' : c === 'type' ? 'age' : 'none'));
   useEffect(() => { try { localStorage.setItem('colorBy', colorBy); } catch {} }, [colorBy]);
   const [newOpen, setNewOpen] = useState(false);
+  const [addPerson, setAddPerson] = useState(false);
   // the Browse drawer starts below the search row and the active-filter chips (which wrap and grow), never underneath them
   const headRef = useRef<HTMLDivElement>(null);
   const [browseTop, setBrowseTop] = useState(70);
@@ -304,6 +308,7 @@ export default function App() {
     { id: 'week', label: 'Weekly review', hint: 'this week per customer, copy as markdown', keys: 'w', run: () => setView('week') },
     { id: 'tasks', label: 'Tasks', hint: 'every open checkbox', keys: 't', run: () => setView('tasks') },
     { id: 'cockpit', label: 'Customer cockpit', hint: 'pick a customer', keys: 'k', run: () => openCockpit(null) },
+    ...(peopleVault() && !safeMode ? [{ id: 'addperson', label: 'Add person', hint: 'family, friend, colleague... with a profile', keys: 'a', run: () => setAddPerson(true) }] : []),
     ...(hasPeople ? [{ id: 'circles', label: 'Circles', hint: 'friends and family, who to reach out to', keys: 'o', run: () => setView('circles') }] : []),
     ...customers.map(c => ({ id: 'ws-' + c, label: 'Workspace: ' + pretty(c), hint: 'this customer as the context', run: () => enterWorkspace(c) })),
     ...(workspace ? [{ id: 'ws-leave', label: 'Leave workspace', hint: pretty(workspace), keys: 'g', run: leaveWorkspace }] : []),
@@ -344,6 +349,7 @@ export default function App() {
       else if (e.key === 'h') toggleView('today');
       else if (e.key === 'w') toggleView('week');
       else if (e.key === 'o' && hasPeople) toggleView('circles');
+      else if (e.key === 'a' && peopleVault() && !safeMode && !editIdRef.current) { e.preventDefault(); setAddPerson(true); }
       else if (e.key === 'k') { if (tasksRef.current === 'cockpit') setView(null); else openCockpit(workspaceRef.current || selNote?.customer || customer); }
       else if (e.key === 'g' && customers.length) { e.preventDefault(); if (workspaceRef.current) leaveWorkspace(); else setWsPick(true); }
       else if (e.key === 'c' && dailyVault() && !editIdRef.current && !safeMode) { e.preventDefault(); setCaptureOpen(true); }
@@ -477,8 +483,8 @@ export default function App() {
         {changed.size > 0 && <> &middot; <button onClick={() => { try { localStorage.setItem('browseTab', 'new'); } catch {} setBrowseKey(k => k + 1); setBrowse(true); setIntroMsg(false); }}>{changed.size} updated since you last looked</button></>}
       </div>}
  {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
- {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} />}
- {view === 'circles' && <Circles notes={vault.notes} colors={colors} dark={dark} right={panelW} selected={selected} safe={safeMode} onSelect={id => select(id)} onClose={() => setView(null)} />}
+ {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} onCircles={hasPeople ? () => setView('circles') : undefined} />}
+ {view === 'circles' && <Circles notes={vault.notes} colors={colors} dark={dark} right={panelW} selected={selected} safe={safeMode} onSelect={id => select(id)} onClose={() => setView(null)} onAdd={peopleVault() && !safeMode ? () => setAddPerson(true) : undefined} />}
  {view === 'week' && <Week right={panelW} notes={vault.notes} customers={customers} selected={selected} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} />}
  {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} scope={scopeNow} onScope={s => setCkScope({ customer: customer || '', ...s })} onCustomer={setCustomer} onSelect={select} onFacet={(f, v) => { setView(null); pickFacet(f, v); }} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
@@ -545,6 +551,7 @@ export default function App() {
         {AGE_BUCKETS.map(b => <span key={b.label}><i className={'type-dot' + (b.light ? '' : ' neutral')} style={b.light ? { background: dark ? b.dark : b.light } : undefined} />{b.label}</span>)}
       </div>}
       {safeMode && <button className="safe-badge" onClick={() => setSafeMode(false)} title="Click to leave safe mode">Safe mode: {vault.hiddenCount} notes hidden</button>}
+      {addPerson && <AddPerson onClose={() => setAddPerson(false)} />}
       {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} />}
       {captureOpen && !safeMode && dailyVault() && <Capture vaults={vault.writableVaults} onClose={() => setCaptureOpen(false)}
         onDone={(v, p) => { const m = `Captured to ${v}: ${p}`; try { sessionStorage.setItem('kmToast', m); } catch {} setCaptureOpen(false); setToast(m); }} />}

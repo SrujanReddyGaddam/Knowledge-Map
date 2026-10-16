@@ -17,6 +17,8 @@ import { rawNote, saveNote } from './api';
 import { unlinkedMentions, linkFirstMention } from './mentions';
 import { weeklyPrompt, ticketFor, ofCustomer, pretty } from './cockpitData';
 import Crumbs, { crumbsFor, scopeOf } from './Crumbs';
+import PersonProfile from './PersonProfile';
+import { isPerson } from './circlesData';
 
 type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
@@ -227,6 +229,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               `${note.backlinks.length} ${note.backlinks.length === 1 ? 'link' : 'links'} in, ${note.links.length} out`,
               note.fetched && 'fetched ' + note.fetched,
             ].filter(Boolean).join('  \u00b7  ')}</div>
+            {isPerson(note) && <PersonProfile note={note} canWrite={note.writable && !safeMode} resolve={resolve} onNav={onNav} />}
             {note.kind === 'drawing' && note.scene && <section className="print-keep"><div className="label">Drawing</div><Drawing scene={note.scene} dark={dark} /></section>}
             {note.kind !== 'drawing' && toc.length >= 3 && <section className="toc">
               <button className="toc-head" onClick={() => setTocOpen(v => !v)} aria-expanded={tocOpen}><span className="label">Contents ({toc.length})</span><span className={'chev' + (tocOpen ? ' flip' : '')}>&#8964;</span></button>

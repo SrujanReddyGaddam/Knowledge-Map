@@ -3,15 +3,13 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import type { Note } from 'virtual:vault';
 import type { Colors } from './palettes';
-import { circlesData, RINGS, RELATIONS, agoText, bdayText, today, type Person, type Relation } from './circlesData';
-import { appendLine, rawNote, saveNote } from './api';
-import { setFrontmatter } from './review';
+import { circlesData, RINGS, RELATIONS, agoText, bdayText, type Person, type Relation } from './circlesData';
 
 // Circles (key o): people as a 3D ball of concentric shells around "me". The shell is how close someone is (circle: 1 to 4),
 // color and shape say who they are (relation). Each shell's people are grouped by relation: on a tilted orbit (a ring that
 // links them, with a tinted arc per group) while a shell holds up to ORBIT_MAX people, spread over the shell's surface in
 // wedges per group beyond that. A faint spoke runs from each person to the center, brighter the longer since the last contact.
-type Props = { notes: Note[]; colors: Colors; dark: boolean; right: number; selected: string | null; safe: boolean; onSelect: (id: string | null) => void; onClose: () => void };
+type Props = { notes: Note[]; colors: Colors; dark: boolean; right: number; selected: string | null; safe: boolean; onSelect: (id: string | null) => void; onClose: () => void; onAdd?: () => void };
 
 const RADII = [0, 120, 215, 310, 405];
 // per shell: orbit tilt, turn and roll (radians). Tilted close to face-on so a ring of names reads like a circle; dragging shows the ball
@@ -21,13 +19,12 @@ const DOT = [0, 1.15, 1, 0.86, 0.74];   // dot size per shell: closer people are
 const HUE: Record<Relation, [string, string]> = {   // light, dark
   family: ['#d9622f', '#e8774a'], friend: ['#2a78d6', '#4a93ea'], colleague: ['#13976a', '#22b07c'], 'ex-colleague': ['#13976a', '#22b07c'], acquaintance: ['#8a8a82', '#8f8f88'],
 };
-const KINDS = ['call', 'text', 'video', 'met'];
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} } };
 
 type Slot = { p: Person; shell: number; holder: THREE.Object3D; spin: THREE.Object3D; local: THREE.Vector3; pos: THREE.Vector3; lw: number; lab: boolean; left: boolean; css: [string, string, string, string] };   // css: last written transform, opacity, z-index, pointer-events
 type Scr = { sl: Slot; x: number; y: number; s: number; front: number; off: boolean };
 
-export default function Circles({ notes, colors, dark, right, selected, safe, onSelect, onClose }: Props) {
+export default function Circles({ notes, colors, dark, right, selected, safe, onSelect, onClose, onAdd }: Props) {
   const d = useMemo(() => circlesData(notes), [notes]);
   const host = useRef<HTMLDivElement>(null);
   const dots = useRef(new Map<string, HTMLButtonElement>());
@@ -275,14 +272,14 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
             <button key={r.key} className={hidden.has(r.key) ? 'off' : ''} onClick={() => toggle(r.key)} title={hidden.has(r.key) ? 'Show ' + r.label.toLowerCase() : 'Fade ' + r.label.toLowerCase()}>
               <i className={'ci-sw rel-' + r.key} />{r.label}<small>{count(r.key)}</small></button>))}</div>}
         </div>
-        <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close  (o or Esc)">&times;</button>
+        <div className="ci-head-btns">{onAdd && <button className="btn primary" onClick={onAdd} title="Add a person  (a)">+ Add person</button>}
+          <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close  (o or Esc)">&times;</button></div>
       </header>
 
       {!d.people.length
         ? <div className="pv-empty ci-empty">{safe ? 'Safe mode hides personal notes. Leave Safe mode to see your circles.' : <>No people yet. Add a note with <code>type: person</code> and a <code>relation:</code> (family, friend, colleague, ex-colleague or acquaintance); the Personal vault's person template does this.</>}</div>
         : <Side d={d} hidden={hidden} selected={selected} onSelect={onSelect} />}
 
-      {cur && <PersonCard key={cur.note.id} p={cur} canWrite={!safe && cur.note.writable} onClose={() => onSelect(null)} />}
     </div>
   );
 }
@@ -317,64 +314,5 @@ function Side({ d, hidden, selected, onSelect }: { d: ReturnType<typeof circlesD
       </div>
       <div className="ci-legend"><span><i className="ci-lg overdue" />Overdue</span><span><i className="ci-lg due" />Due soon</span><span><i className="ci-lg never" />Not logged</span></div>
     </aside>
-  );
-}
-
-function PersonCard({ p, canWrite, onClose }: { p: Person; canWrite: boolean; onClose: () => void }) {
-  const [kind, setKind] = useState('call');
-  const [text, setText] = useState('');
-  const [date, setDate] = useState(today());
-  const [busy, setBusy] = useState('');
-  const [err, setErr] = useState('');
-  const [done, setDone] = useState('');
-  const n = p.note;
-
-  const log = async () => {
-    const t = text.replace(/\s+/g, ' ').trim();
-    if (!t || busy) return;
-    setBusy('log'); setErr('');
-    try {
-      const r = await appendLine(n.vault, n.path, 'Log', `- ${date} ${kind}: ${t}`);
-      if (r.status !== 200) throw new Error(r.json.error || 'could not save (HTTP ' + r.status + ')');
-      setDone('Logged, refreshing'); setText('');   // the page reloads from the server's update a moment later
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
-  };
-  const move = async (c: number) => {
-    if (c === p.circle || busy) return;
-    setBusy('circle'); setErr('');
-    try {
-      const r = await rawNote(n.id);
-      if (r.status !== 200) throw new Error(r.json.error || 'could not read the note');
-      const out = setFrontmatter(r.json.text, { circle: String(c) });
-      if (out === null) throw new Error('the frontmatter of this note cannot be edited safely');
-      const s = await saveNote(n.id, out, r.json.hash);
-      if (s.status !== 200) throw new Error(s.json.error || 'save failed (HTTP ' + s.status + ')');
-      setDone('Moved to ' + RINGS[c - 1].label + ', refreshing');
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
-  };
-
-  return (
-    <div className={'ci-card rel-' + p.relation}>
-      <div className="ci-card-head"><i className={'ci-sw rel-' + p.relation} /><b>{p.name}</b><span>{relLabel(p)}</span>
-        <button className="ci-x" onClick={onClose} aria-label="Close" title="Close  (Esc)">&times;</button></div>
-      <div className="ci-circle" role="group" aria-label="Circle">
-        {RINGS.map(r => <button key={r.n} className={r.n === p.circle ? 'on' : ''} disabled={!canWrite || !!busy} onClick={() => move(r.n)} title={`${r.label}: check in every ${r.every} days`}>{r.n} {r.label}</button>)}
-      </div>
-      <dl>
-        <dt>Last contact</dt><dd className={p.status}>{agoText(p.since)}{p.last && <> ({p.last}{p.lastKind ? ', ' + p.lastKind : ''})</>}{p.lastText && <small>{p.lastText}</small>}</dd>
-        <dt>Rhythm</dt><dd>every {p.every} days{p.status === 'overdue' ? `, ${p.since! - p.every} days late` : ''}</dd>
-        <dt>Birthday</dt><dd>{p.birthday ? <>{p.birthday} <small>{bdayText(p)}</small></> : <span className="ci-none">not set (edit the note)</span>}</dd>
-      </dl>
-      {canWrite ? (
-        <form className="ci-log" onSubmit={e => { e.preventDefault(); log(); }}>
-          <select value={kind} onChange={e => setKind(e.target.value)} aria-label="Kind">{KINDS.map(k => <option key={k}>{k}</option>)}</select>
-          <input type="date" value={date} max={today()} onChange={e => setDate(e.target.value || today())} aria-label="Date" />
-          <input value={text} onChange={e => setText(e.target.value)} placeholder="What did you talk about?" maxLength={400} aria-label="What did you talk about" />
-          <button type="submit" disabled={!text.trim() || !!busy}>{busy === 'log' ? 'Saving' : 'Log'}</button>
-        </form>
-      ) : <p className="ci-none">Read only here (Safe mode or a read-only vault).</p>}
-      {done && <p className="ci-done">{done}</p>}
-      {err && <p className="tv-err">{err}</p>}
-    </div>
   );
 }
