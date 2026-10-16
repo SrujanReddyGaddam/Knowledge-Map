@@ -75,7 +75,10 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const [confirmDel, setConfirmDel] = useState(false);
   const [delErr, setDelErr] = useState('');
   useEffect(() => { setConfirmDel(false); setDelErr(''); }, [note?.id]);
-  const [expanded, setExpanded] = useState(false);
+  // Read more / Show less is remembered for every note (localStorage noteFull) until clicked again; notes open in full by default
+  const fullPref = () => { try { return localStorage.getItem('noteFull') !== '0'; } catch { return true; } };
+  const [expanded, setExpanded] = useState(fullPref);
+  const toggleFull = () => { const next = !expanded; try { localStorage.setItem('noteFull', next ? '1' : '0'); } catch {} setExpanded(next); };
   const [tickErr, setTickErr] = useState('');
   useEffect(() => setTickErr(''), [note?.id]);
   // a click on a checkbox in the note: find the same task in the file (by its text) and save the flipped box; the page refreshes after
@@ -125,7 +128,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const onBodyScroll = () => { hideCard(); const b = bodyRef.current, p = progRef.current; if (b && p) { const max = b.scrollHeight - b.clientHeight; p.style.transform = `scaleX(${max > 4 ? b.scrollTop / max : 0})`; } };
   const bodyRef = useRef<HTMLDivElement>(null);
   const mdRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { setExpanded(false); setCopied(''); bodyRef.current?.scrollTo(0, 0); if (progRef.current) progRef.current.style.transform = 'scaleX(0)'; }, [note?.id]);
+  useEffect(() => { setExpanded(fullPref()); setCopied(''); bodyRef.current?.scrollTo(0, 0); if (progRef.current) progRef.current.style.transform = 'scaleX(0)'; }, [note?.id]);
 
   const { html, toc } = useMemo((): { html: string; toc: Toc } => {
     if (!note) return { html: '', toc: [] };
@@ -236,7 +239,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
                 onClick={e => { const t = e.target as HTMLElement; if (t instanceof HTMLInputElement && t.classList.contains('task-box')) { e.preventDefault(); onTick(t); return; } const a = t.closest('a.wl[data-id]') as HTMLElement | null; if (a) { hideCard(); onNav(a.dataset.id!); } }}
                 onMouseOver={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) showCard(a); }}
                 onMouseOut={e => { if ((e.target as HTMLElement).closest('a.wl[data-id]')) hideCard(); }} />
-              {!maxed && <button className="read-more" onClick={() => setExpanded(v => !v)}>{expanded ? 'Show less' : 'Read more'} <span className={expanded ? 'flip' : ''}>&#8964;</span></button>}
+              {!maxed && <button className="read-more" onClick={toggleFull} title={expanded ? 'Show the start of notes from now on' : 'Open notes in full from now on'}>{expanded ? 'Show less' : 'Read more'} <span className={expanded ? 'flip' : ''}>&#8964;</span></button>}
             </section>}
             {note.kind === 'drawing' && note.body && <section className="print-keep"><div className="label">Text in this drawing</div><div className="md expanded"><p style={{ whiteSpace: 'pre-wrap' }}>{note.body}</p></div></section>}
             {outs.length > 0 && <section><div className="label">Links to ({outs.length})</div><div className="chips">{outs.map(c => <button key={c.id} className="chip" {...hov(c.id)} onClick={() => { hideCard(); onNav(c.id); }}>{shortTitle(c.title)}</button>)}</div></section>}
