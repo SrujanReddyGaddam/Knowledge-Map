@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { marked } from 'marked';
 import type { Note } from 'virtual:vault';
 import vault from './data';
-import { shortTitle } from './util';
+import { esc, shortTitle } from './util';
+import { distillPrompt } from './distill';
 import type { Task } from './taskScan';
 import { TaskRow, useTaskActions, keyOf } from './TaskRow';
 import ResumeCard from './ResumeCard';
@@ -30,6 +31,9 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
   const { list } = useProjects();
   const act = useActivity();
   const [brief, setBrief] = useState(false);
+  // Current state opens short (the project cards stay in view); Show all is remembered in localStorage ckStateOpen
+  const [stateOpen, setStateOpen] = useState(() => { try { return localStorage.getItem('ckStateOpen') === '1'; } catch { return false; } });
+  const toggleState = () => { const v = !stateOpen; try { localStorage.setItem('ckStateOpen', v ? '1' : '0'); } catch {} setStateOpen(v); };
   const [copied, setCopied] = useState('');
   const copy = (what: string, text: string) => navigator.clipboard.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(''), 1600); });
   const code = useMemo(() => (customer && list ? list.filter(p => customerOf(p, customers) === customer) : []), [customer, list, customers]);
@@ -38,7 +42,11 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
   const scopeLabel = crumbs.map(c => c.label).join(' > ');
   const text = useMemo(() => (customer && d && brief ? briefText(customer, d, vault.jiraBase, scopeLabel) : ''), [customer, d, brief, scopeLabel]);
   // shown rendered; Copy as markdown still copies the text. Raw HTML in note titles or summaries is escaped, links open in a new tab.
-  const html = useMemo(() => (text ? (marked.parse(text.replace(/&/g, '&amp;').replace(/</g, '&lt;'), { async: false }) as string).replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=') : ''), [text]);
+  const html = useMemo(() => (text ? (marked.parse(text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, t: string, al?: string) => al || t), { async: false }) as string).replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer" href=') : ''), [text]);
+  // the hub's Current state, rendered with clickable [[links]] (escaped first, links resolved by file name)
+  const byBase = useMemo(() => new Map(notes.map(n => [n.path.split('/').pop()!.replace(/\.md$/i, '').toLowerCase(), n])), [notes]);
+  const stateHtml = useMemo(() => (d?.state ? marked.parse(d.state.replace(/^_Distilled through[^\n]*\n+/i, '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, t: string, al?: string) => { const n = byBase.get(t.trim().toLowerCase()); return n ? `<a class="wl" data-id="${esc(n.id)}">${esc(al || shortTitle(n.title))}</a>` : esc(al || t); }), { async: false }) as string : ''), [d, byBase]);
   const counts = useMemo(() => new Map(customers.map(c => [c, notes.filter(n => ofCustomer(n, c)).length])), [customers, notes]);
 
   const nlink = (n: Note, extra?: string) => (
@@ -77,6 +85,14 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
           {d.hub && <button className="btn" onClick={() => onSelect(d.hub!.id)}>Open hub note</button>}
           <button className="btn" onClick={() => copy('weekly', weeklyPrompt(crumbs.map(c => c.label).join(', '), ticketFor(d.hub, d.mine), d.mine))} title="Copies a prompt for the /fde-weekly-jira-update skill with the notes changed this week. Paste it into Claude Code.">{copied === 'weekly' ? 'Prompt copied' : 'Weekly Jira update prompt'}</button>
         </div>
+        {d.hub && (d.state || d.pending.length > 0) && <section className="pv-sec ck-state">
+          <div className="pv-sec-head"><h2>Current state</h2><small>{d.state ? 'distilled through ' + (d.distilled || '?') : 'not distilled yet'}</small>
+            {d.pending.length > 0 && <button className="link" onClick={() => copy('distill', distillPrompt(d.hub!))} title="Copies the command for Claude Code in the vault folder; it folds the newer notes into this section and can stop and resume any time">{copied === 'distill' ? 'Copied' : `${d.pending.length} newer ${d.pending.length === 1 ? 'note' : 'notes'} not folded in \u00b7 copy /distill`}</button>}</div>
+          {d.state ? <div className={'ck-state-md md expanded' + (stateOpen ? '' : ' clamp')} dangerouslySetInnerHTML={{ __html: stateHtml }} onClick={e => { const a = (e.target as HTMLElement).closest('a.wl[data-id]') as HTMLElement | null; if (a) onSelect(a.dataset.id!); }} />
+            : null}
+          {d.state && <button className="link ck-more" onClick={toggleState} aria-expanded={stateOpen}>{stateOpen ? 'Show less' : 'Show all'}</button>}
+          {!d.state && <div className="pv-empty">This hub has no Current state yet. Run /distill in the vault to write one from its notes.</div>}
+        </section>}
         {brief && <section className="ck-brief">
           <div className="pv-sec-head"><h2>Brief</h2><button className="link" onClick={() => copy('brief', text)}>{copied === 'brief' ? 'Copied' : 'Copy as markdown'}</button></div>
           <div className="ck-brief-md" dangerouslySetInnerHTML={{ __html: html }} />
@@ -110,7 +126,7 @@ export default function Cockpit({ customer, customers, right, notes, tasks, chan
                 const con = on && scope.component === k;
                 return <button key={k} className={'chip' + (con ? ' active' : '')} aria-pressed={con} onClick={e => { e.stopPropagation(); onScope(con ? { project: p.project } : { project: p.project, component: k }); }} title={con ? `Back to ${name}` : 'Scope the cockpit to this component'}>{nameOf(p.project, k)} <small>{n}</small></button>;
               })}</div>}
-              <div className="ck-card-foot"><span>{p.count} notes · {p.tasks} open {p.tasks === 1 ? 'task' : 'tasks'}</span>
+              <div className="ck-card-foot"><span>{p.count} notes · {p.tasks} open {p.tasks === 1 ? 'task' : 'tasks'}{p.pending > 0 && <span className="ck-pending" title="Notes newer than this project's Current state (run /distill in the vault)"> · {p.pending} not distilled</span>}</span>
                 <button className="link ck-weekly" onClick={e => { e.stopPropagation(); copy('w-' + p.project, weeklyPrompt(`${label} ${name}`, ticketFor(p.hub, p.notes), p.notes)); }} title="Copy a /fde-weekly-jira-update prompt for this project">{copied === 'w-' + p.project ? 'copied' : 'weekly update'}</button></div>
             </div>;
           })}</div>

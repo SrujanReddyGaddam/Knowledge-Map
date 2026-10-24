@@ -125,7 +125,7 @@ export function loadVaults(cfg: Config) {
       const body = scene ? drawingText : parsed.body;
       const h1 = body.replace(/^(```|~~~)[\s\S]*?^\1/gm, '').match(/^#\s+(.+)$/m)?.[1]?.trim();   // a '# comment' inside a code block is not a heading
       const tags = [...new Set([...asList(fm.tags), ...(typeof fm.type === 'string' && fm.type ? [fm.type] : []), ...(scene ? ['excalidraw'] : [])])];
-      const status = String(fm.status || '').toLowerCase().match(/current|stale|needs-verification|draft|closed|deprecated|archived/)?.[0] || (hasFm ? 'unknown' : 'none');
+      const status = String(fm.status || '').toLowerCase().match(/current|stale|needs-verification|draft|closed|deprecated|archived|superseded/)?.[0] || (hasFm ? 'unknown' : 'none');
       const rewritten = outsideCode(body, s => s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (m, name: string) => {
         const b = path.basename(name.trim());
         if (!images.has(b)) return m;

@@ -10,6 +10,9 @@ km_folder: knowledge
 
 ## Summary
 
+## Current state
+_Not distilled yet. Run /distill._
+
 ## Start here
 
 ## All notes

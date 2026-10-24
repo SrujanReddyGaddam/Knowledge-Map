@@ -15,6 +15,7 @@
 7. Cross-reference with `[[file-name]]` (bare file name, no `.md`), not paths.
 8. Notes derived from an external doc (wiki page, ticket, chat thread, vendor docs) record `source` and `source_fetched`, so stale knowledge can be refreshed instead of silently wrong.
 9. Nothing is deleted. Superseded or finished material moves to `archive/`.
+10. Read the current state, not the history. Every customer, project and component hub opens with `## Current state`, the distilled truth as of `distilled_through`. Meetings, journals and captures are the log behind it. A note replaced by a newer one gets `status: superseded` and `superseded_by`; it is not edited to match.
 10. No secrets in notes, ever: no tokens, passwords, API keys, connection strings. Write where the secret lives instead ("in the team password manager under X").
 
 ## Folders
@@ -70,11 +71,13 @@ tags: [retries, http]
 customer: acme           # only for customer material (slug)
 project: demo            # only for project material (slug)
 component: invoice-export  # optional: part of the project (slug from the project hub's Components list)
-status: current          # draft | current | needs-verification | stale | closed
+status: current          # draft | current | needs-verification | stale | superseded | closed
+superseded_by: "[[newer-note]]"   # only with status: superseded
 source: https://...      # or "none" if original
 source_fetched: 2026-01-15
 tickets: [ABC-123]       # ticket ids, searchable as tickets:ABC-123
 related: ["[[other-note]]"]
+distilled_through: 2026-01-15   # hubs only: notes up to this date are folded into ## Current state (set by the distill skill)
 ---
 ```
 
@@ -86,6 +89,23 @@ Sensitivity decides what the app's Safe mode (for screen sharing) shows: only `p
 - Time-bound notes start with the date: `2026-01-15-acme-demo-kickoff.md`. Evergreen notes do not.
 - Customer-specific notes start with the customer slug (`acme-...`), so their names never clash with generic notes. Dated customer notes: date first, then the slug (`2026-01-15-acme-...`).
 - Hubs: `projects/<customer>/<customer>.md` for a customer, `projects/<customer>/<project>/<customer>-<project>.md` for a project, `knowledge/knowledge.md` for knowledge, plus `knowledge/<area>/<area>.md` once an area has 3 or more notes.
+
+## Current state (distilled hubs)
+
+Notes pile up and facts change, so the hub carries the answer and the notes carry the history. Customer, project and component hubs start with this section, right after the intro paragraph:
+
+```
+## Current state
+_Distilled through 2026-01-15. Read this first; the notes below are the history._
+
+**Where it stands:** 3 to 5 lines.
+**Decisions in force:** newest wins; each links the note that made it.
+**Open questions:** what is still unknown, who owns it.
+**Next:** the next 1 to 3 steps.
+**Changed recently:** what moved in the last distill, with links.
+```
+
+It is rewritten, never appended to: a fact that changed is replaced, a reversed decision disappears (the newer one links its note). Keep it under about 40 lines. The `distill` skill writes it in chunks, so it can run whenever there are spare tokens and continue where it stopped; progress is the hub's `distilled_through`, and `node {{APP_DIR}}/scripts/distill-queue.ts "{{VAULT_PATH}}"` shows what is pending. Changes that need a yes (mark a note superseded, promote a finding to `knowledge/`) wait as checkboxes in `_meta/distill-proposals.md`: tick to approve, delete the line to reject. The app dims superseded notes, ranks them lower in search, shows the Current state first in the cockpit and Brief me, and says how many newer notes are not folded in yet.
 
 ## Generated lists
 
@@ -105,14 +125,15 @@ Run `node {{APP_DIR}}/scripts/build-indexes.ts "{{VAULT_PATH}}"` after adding or
 - Ask first: moving, renaming, merging or archiving notes; anything in `sources/`; changing these rules.
 - Record what you changed in `WORKLOG.md` (newest first, dated). Do not paste note content into commits, issues or logs outside this vault.
 - Prefer the Knowledge Map app's Rename (or `POST /api/rename`) for moves, because it rewrites links in other notes.
-- Skills for upkeep live in `.claude/skills/` (Claude Code picks them up when started in this folder; other agents can read the `SKILL.md` files directly): `organize-vault` (one-time cleanup and sanitizing of existing notes), `triage-inbox`, `lint-vault`, `harvest-project`.
+- Skills for upkeep live in `.claude/skills/` (Claude Code picks them up when started in this folder; other agents can read the `SKILL.md` files directly): `organize-vault` (one-time cleanup and sanitizing of existing notes), `triage-inbox`, `lint-vault`, `distill`, `harvest-project`.
 
 ## Maintenance
 
 | When | What | Skill |
 |---|---|---|
-| Daily, or when `inbox/` piles up | Each capture becomes a filed note, a task, part of an existing note, or is archived. The raw original goes to `sources/`. | `triage-inbox` |
+| Daily, or when `inbox/` piles up | Filter first: "will I look for this in 3 months?" If not, only the raw original goes to `sources/`. Otherwise each capture becomes a filed note, a task, or part of an existing note. The raw original goes to `sources/`. | `triage-inbox` |
 | After an incident or working session | Write the `incident`, pull the generic `bug`/`concept` into `knowledge/`, add a `lesson` if there is one, link everything to the hubs and the day's journal. | |
+| Whenever there are spare tokens, at least weekly | Fold new notes into each hub's `## Current state`, a few chunks at a time; approve or reject `_meta/distill-proposals.md`. | `distill` |
 | Weekly | The app's Health tab (missing fields, stale sources, old inbox items, notes without a hub, broken links, orphans), then the list builder. | `lint-vault` |
 | Project close | Harvest lessons and reusable material into `knowledge/`, move the project to `archive/`. | `harvest-project` |
 | Once, when adopting old notes | Inventory, classify, sanitize, move, add frontmatter, with two approval gates. | `organize-vault` |

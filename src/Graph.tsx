@@ -353,7 +353,8 @@ export default function Graph(props: Props) {
         n.sr = n.r * (1 + 0.5 * Math.pow(1 - n.front, 3)) * pxPerUnit / (cam.dist - z2);
         const matchQ = !matchIds || matchIds.has(n.id) || n.showT === 0;
         const off = pth ? !pth.nodes.has(n.id) && n.id !== hover : !!focus && n.id !== focus && !fnb!.has(n.id);
-        n.dim += (((!matchQ) || off ? 1 : 0) - n.dim) * fast;
+        // superseded notes (status: superseded) stay half dimmed: history, not the current answer
+        n.dim += (((!matchQ) || off ? 1 : n.note.status === 'superseded' ? 0.6 : 0) - n.dim) * fast;
         n.hov += ((n.id === hover || n.id === selectedId ? 1 : 0) - n.hov) * fast;
       }
 

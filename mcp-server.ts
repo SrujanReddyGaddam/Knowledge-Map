@@ -120,14 +120,17 @@ const TOOLS: { name: string; description: string; inputSchema: object; run: (a: 
     },
   },
   {
-    name: 'customer_brief', description: 'A 30 second recap of one customer: hub summary, open tasks, open questions, notes needing attention, recent meetings, projects, code projects, people, tickets.',
-    inputSchema: S({ customer: str('customer slug as in the customer: field, e.g. acme-corp') }, ['customer']),
+    name: 'customer_brief', description: 'A 30 second recap of one customer, or of one of its projects: the hub\'s distilled Current state first (when the hub has one), then open tasks, open questions, notes needing attention, recent meetings, projects, code projects, people, tickets.',
+    inputSchema: S({ customer: str('customer slug as in the customer: field, e.g. acme-corp'), project: str('optional project slug as in the project: field, to brief one project') }, ['customer']),
     run: a => {
       const { notes, cfg, jiraBase } = data(), cs = customersOf(notes), q = String(a.customer || '').toLowerCase().trim();
       const c = cs.find(x => x === q) ?? cs.find(x => x.startsWith(q) || x.includes(q));
       if (!c) return `Unknown customer "${a.customer}". Known: ${cs.join(', ') || 'none'}.`;
       const code = SAFE ? [] : scanProjects(cfg.projects).filter(p => projectCustomer(p, cs, cfg.projects?.customers || {}) === c);
-      return briefText(c, cockpitData(c, notes, collectTasks(notes), new Set(), code), jiraBase).replace(/^## Changed since you last looked \(0\)\n/m, '');
+      const p = String(a.project || '').toLowerCase().trim(), ps = [...new Set(notes.filter(n => ofCustomer(n, c) && n.project).map(n => n.project))];
+      const proj = p ? ps.find(x => x === p) ?? ps.find(x => x.includes(p)) : undefined;
+      if (p && !proj) return `Unknown project "${a.project}" for ${c}. Known: ${ps.join(', ') || 'none'}.`;
+      return briefText(c, cockpitData(c, notes, collectTasks(notes), new Set(), code, proj ? { project: proj } : {}), jiraBase, proj ? `${pretty(c)} > ${pretty(proj)}` : pretty(c)).replace(/^## Changed since you last looked \(0\)\n/m, '');
     },
   },
   {

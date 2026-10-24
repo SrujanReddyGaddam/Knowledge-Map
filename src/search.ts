@@ -120,6 +120,7 @@ export function runSearch(index: Ix[], query: string, scope: Scope): Result | nu
     if (!ok) continue;
     if (q.terms.length > 1 && q.terms.every(t => x.title.includes(t))) score += 40;
     if (!q.terms.length && !q.phrases.length) score = 1;
+    if (x.note.status === 'superseded') score *= 0.5;   // replaced notes stay findable but rank under the note that replaced them
     hits.push({ note: x.note, score, where, snippet: where === 'text' || (where === 'meta' && need.length) ? snippetOf(x, need.length ? need : q.terms) : undefined });
   }
   hits.sort((a, b) => b.score - a.score || a.note.title.localeCompare(b.note.title));

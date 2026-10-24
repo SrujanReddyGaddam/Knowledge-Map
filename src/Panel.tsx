@@ -19,6 +19,8 @@ import { weeklyPrompt, ticketFor, ofCustomer, pretty } from './cockpitData';
 import Crumbs, { crumbsFor, scopeOf } from './Crumbs';
 import PersonProfile from './PersonProfile';
 import { isPerson } from './circlesData';
+import { currentState, distilledThrough, distillPrompt, isStateHub, pendingFor, supersededBy } from './distill';
+import { useActivity, realTime } from './activity';
 
 type Props = {
   dark: boolean; width: number; maxed: boolean; onMax: () => void; fs: number; onFs: (v: number) => void; onResize: (w: number) => void;
@@ -110,6 +112,14 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const [umErr, setUmErr] = useState('');
   useEffect(() => { setUmOpen(false); setUmDone(new Set()); setUmErr(''); }, [note?.id]);
   const crumbs = useMemo(() => (note ? crumbsFor([...byId.values()], scopeOf(note)).filter(c => c.hub?.id !== note.id) : []), [note, byId]);
+  // distilled hubs: how far the Current state reaches and how many newer notes are not folded in yet
+  const act = useActivity();
+  const ds = useMemo(() => {
+    if (!note || !isStateHub(note)) return null;
+    const day = (n: Note) => { const t = realTime(n, act); return t ? new Date(t).toLocaleDateString('sv') : ''; };
+    return { through: distilledThrough(note), pending: pendingFor(note, [...byId.values()], day).length, has: !!currentState(note) };
+  }, [note, byId, act]);
+  const newerName = note?.status === 'superseded' ? supersededBy(note) : '', newer = note && newerName ? resolve(note, newerName) : undefined;
   const unlinked = useMemo(() => (umOpen && note ? unlinkedMentions(note, [...byId.values()]) : []), [umOpen, note, byId]);
   const linkMention = async (src: Note) => {
     if (!note) return; setUmErr('');
@@ -229,6 +239,11 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               `${note.backlinks.length} ${note.backlinks.length === 1 ? 'link' : 'links'} in, ${note.links.length} out`,
               note.fetched && 'fetched ' + note.fetched,
             ].filter(Boolean).join('  \u00b7  ')}</div>
+            {note.status === 'superseded' && <div className="ds-banner"><b>Superseded</b>{newer ? <> by <button className="link" {...hov(newer.id)} onClick={() => { hideCard(); onNav(newer.id); }}>{shortTitle(newer.title)}</button></> : newerName ? ` by ${newerName}` : ''}. Kept as history; the newer note says what is true now.</div>}
+            {ds && <div className={'ds-strip' + (ds.pending ? ' behind' : '')}>
+              <span>{ds.has ? <>Current state distilled through <b>{ds.through || '?'}</b></> : 'No current state yet'}{ds.pending ? ` \u00b7 ${ds.pending} newer ${ds.pending === 1 ? 'note' : 'notes'} not folded in` : ds.has ? ' \u00b7 up to date' : ''}</span>
+              {(ds.pending > 0 || !ds.has) && <button className="link" onClick={() => copy('distill', distillPrompt(note))} title="Copies the command for Claude Code in the vault folder; it folds the newer notes into ## Current state and can stop and resume any time">{copied === 'distill' ? 'Copied' : 'Copy /distill command'}</button>}
+            </div>}
             {isPerson(note) && <PersonProfile note={note} canWrite={note.writable && !safeMode} resolve={resolve} onNav={onNav} />}
             {note.kind === 'drawing' && note.scene && <section className="print-keep"><div className="label">Drawing</div><Drawing scene={note.scene} dark={dark} /></section>}
             {note.kind !== 'drawing' && toc.length >= 3 && <section className="toc">

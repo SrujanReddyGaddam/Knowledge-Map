@@ -641,3 +641,15 @@ button.link { all:unset; cursor:pointer; text-decoration:underline; text-underli
 .date-noyear { display:inline-flex !important; flex-direction:row !important; align-items:center; gap:5px; font:10.5px var(--mono); color:var(--mute); cursor:pointer; }
 .date-noyear input { all:revert; margin:0; }
 .date-field small { flex-basis:100%; font:10.5px var(--mono); color:var(--accent); }
+
+/* distilled hubs: superseded banner, distill strip in the panel, Current state in the cockpit */
+.ds-banner { margin:0 0 14px; padding:9px 13px; border-radius:10px; border:1px solid color-mix(in srgb, var(--mute) 45%, var(--line)); background:color-mix(in srgb, var(--mute) 10%, var(--panel)); font-size:13.5px; line-height:1.5; color:color-mix(in srgb, var(--ink) 80%, var(--mute)); }
+.ds-banner .link { font:inherit; font-weight:600; }
+.ds-strip { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; margin:0 0 14px; font-size:12.5px; color:var(--mute); }
+.ds-strip.behind > span { color:color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+.ck-state { margin-top:18px; }
+.ck-state-md { max-width:860px; font-size:14px; line-height:1.6; }
+.ck-state-md > :first-child { margin-top:0; } .ck-state-md p { margin:0 0 8px; } .ck-state-md ul { margin:0 0 10px; padding-left:20px; }
+.ck-state-md.clamp { max-height:300px; overflow:hidden; -webkit-mask-image:linear-gradient(to bottom, #000 70%, transparent); mask-image:linear-gradient(to bottom, #000 70%, transparent); }
+.ck-pending { color:color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+@media print { .ds-strip { display:none !important; } }

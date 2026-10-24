@@ -17,6 +17,8 @@ Extra sources: (none yet)
 ## 2. Classify each item
 One capture can hold several topics: split by topic.
 
+**Noise filter first:** "Will I look for this in 3 months?" If not (chatter, a status the hub already has, a repeat of an existing note, a passing thought with no decision or fact), it does not become a note: keep only the raw original in `sources/` and say why in one line. If it only updates something that exists, extend that note. If it replaces a note (a newer plan, an answered question list), write the new note and add a `supersede` line to `_meta/distill-proposals.md` instead of editing the old one.
+
 | What it is | Where it goes |
 |---|---|
 | Reusable knowledge (no customer detail) | `knowledge/<area>/`, type concept / how-to / reference / lesson / bug, `internal` |

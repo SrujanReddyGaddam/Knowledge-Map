@@ -3,12 +3,15 @@ import { type Task, plainTask, DUE_TEXT } from './taskScan.ts';
 import { shortTitle } from './util.ts';
 import type { Project } from './projects';
 import { realTime, type Activity } from './realTime.ts';
+import { currentState, distilledThrough, isSuperseded, pendingFor } from './distill.ts';
 
 // Data for the customer cockpit and its "Brief me" text. Everything is derived from the notes' frontmatter and text, nothing is stored.
 export const pretty = (s: string) => s.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 const DAY = 864e5;
 const CODE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/;
 export const withoutCode = (t: string) => t.split(CODE).filter((_, i) => i % 2 === 0).join(' ');
+// sections retired by the distill skill live under "## Earlier working notes" at the end of a hub: history, never open items
+export const liveBody = (t: string) => t.split(/^#{1,2}\s+earlier working notes\s*$/im)[0];
 
 // a note belongs to a customer by its frontmatter, or by living under projects/<customer>/
 export const ofCustomer = (n: Note, c: string) => n.customer === c || n.path.toLowerCase().startsWith(`projects/${c}/`);
@@ -40,7 +43,7 @@ export function ticketsIn(notes: Note[]) {
 const QHEAD = /^#{2,4}\s+(open questions|questions|unknowns|open items|to clarify)\b/i;
 export function openQuestions(n: Note) {
   const out: string[] = []; let inQ = false, lvl = 0;
-  for (const l of withoutCode(n.body).split('\n')) {
+  for (const l of withoutCode(liveBody(n.body)).split('\n')) {
     const h = l.match(/^(#{1,6})\s/);
     if (h) { if (QHEAD.test(l)) { inQ = true; lvl = h[1].length; continue; } if (inQ && h[1].length <= lvl) inQ = false; }
     if (!inQ) continue;
@@ -56,7 +59,7 @@ export const waitsOnOthers = (t: Task) => WAIT.test(plainTask(t.text));
 // list items under a "Decisions" heading
 export function decisionsIn(n: Note) {
   const out: string[] = []; let on = false, lvl = 0;
-  for (const l of withoutCode(n.body).split('\n')) {
+  for (const l of withoutCode(liveBody(n.body)).split('\n')) {
     const h = l.match(/^(#{1,6})\s+(.*)/);
     if (h) { if (/^decisions?\b/i.test(h[2])) { on = true; lvl = h[1].length; continue; } if (on && h[1].length <= lvl) on = false; }
     const it = on && l.match(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*\S)/);
@@ -69,6 +72,8 @@ const nextOrder = (act: Activity | null) => (a: Task, b: Task) => (a.due || '9')
 
 const dateOf = (n: Note) => n.path.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || n.meta.date || new Date(n.mtime).toISOString().slice(0, 10);
 const NEEDS = new Set(['draft', 'needs-verification', 'stale']);
+// a note's day for distill bookkeeping: real activity (bulk commits ignored), as local YYYY-MM-DD
+const dayOf = (act: Activity | null) => (n: Note) => { const t = realTime(n, act); return t ? new Date(t).toLocaleDateString('sv') : ''; };
 
 // scope: one project of the customer, or one component of that project. Every section then uses only those notes;
 // the project cards always cover the whole customer.
@@ -93,15 +98,18 @@ export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Se
       project: p, hub: pHub, count: list.length, newest: sorted.find(n => n.type !== 'hub') ?? sorted[0], notes: list, mtime: worked ? realTime(worked, act) : 0, worked,
       status: pHub && pHub.status !== 'none' && pHub.status !== 'unknown' ? pHub.status : '',
       tasks: ptasks.length, next: ptasks[0] ?? null, waiting: ptasks.filter(waitsOnOthers),
-      questions: list.reduce((k, n) => k + openQuestions(n).length, 0),
-      meeting: list.filter(n => n.type === 'meeting').sort((a, b) => dateOf(b).localeCompare(dateOf(a)))[0] ?? null,
+      questions: list.reduce((k, n) => k + (isSuperseded(n) ? 0 : openQuestions(n).length), 0),
+      pending: pHub ? pendingFor(pHub, notes, dayOf(act)).length : 0,
+      meeting: list.filter(n => n.type === 'meeting' && !isSuperseded(n)).sort((a, b) => dateOf(b).localeCompare(dateOf(a)))[0] ?? null,
       components: [...comps].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
     };
   }).sort((a, b) => b.mtime - a.mtime);
   const people = new Map<string, { note: Note; n: number }>();
   const byId = new Map(notes.map(n => [n.id, n]));
   for (const n of mine) for (const o of [...n.links, ...n.backlinks]) { const p = byId.get(o); if (p && p.type === 'person') people.set(p.id, { note: p, n: (people.get(p.id)?.n || 0) + 1 }); }
-  const questions = mine.map(n => ({ note: n, items: openQuestions(n) })).filter(x => x.items.length);
+  // superseded notes are history: their questions, meetings and statuses no longer speak for the project
+  const live = mine.filter(n => !isSuperseded(n));
+  const questions = live.map(n => ({ note: n, items: openQuestions(n) })).filter(x => x.items.length);
   const myTasks = tasks.filter(t => ids.has(t.note.id)).sort(nextOrder(act));
   // inside one project: open tasks per component (biggest first, project-wide last), each list starts with its next step
   const groups = new Map<string, Task[]>();
@@ -111,9 +119,10 @@ export function cockpitData(c: string, notes: Note[], tasks: Task[], changed: Se
     mine, hub, all, scope,
     changed: mine.filter(n => changed.has(n.id)).sort((a, b) => b.mtime - a.mtime),
     tasks: myTasks, taskGroups,
-    attention: mine.filter(n => NEEDS.has(n.status)).sort((a, b) => b.mtime - a.mtime),
+    attention: live.filter(n => NEEDS.has(n.status)).sort((a, b) => b.mtime - a.mtime),
     questions,
-    meetings: mine.filter(n => n.type === 'meeting').sort((a, b) => dateOf(b).localeCompare(dateOf(a))).slice(0, 8),
+    state: hub ? currentState(hub) : '', distilled: hub ? distilledThrough(hub) : '', pending: hub ? pendingFor(hub, notes, dayOf(act)) : [],
+    meetings: live.filter(n => n.type === 'meeting').sort((a, b) => dateOf(b).localeCompare(dateOf(a))).slice(0, 8),
     projects: projectList,
     people: [...people.values()].sort((a, b) => b.n - a.n).map(x => x.note),
     tickets: ticketsIn(mine),
@@ -140,6 +149,8 @@ export function weeklyPrompt(label: string, ticket: string, notes: Note[]) {
 export function briefText(c: string, d: CockpitData, jiraBase: string, label = pretty(c)) {
   const L: string[] = [`# ${label}: brief (${new Date().toISOString().slice(0, 10)})`, ''];
   if (d.hub?.summary) L.push(d.hub.summary, '');
+  // the distilled answer first; everything below is what is open or new around it
+  if (d.state) L.push(`## Current state (distilled through ${d.distilled || '?'}${d.pending.length ? `, ${d.pending.length} newer ${d.pending.length === 1 ? 'note' : 'notes'} not folded in yet` : ''})`, d.state.replace(/^_Distilled through[^\n]*\n+/i, ''), '');
   const sec = (title: string, rows: string[], max = 8) => { if (!rows.length) return; L.push(`## ${title}`, ...rows.slice(0, max), ...(rows.length > max ? [`- ...and ${rows.length - max} more`] : []), ''); };
   sec(`Changed since you last looked (${d.changed.length})`, d.changed.map(n => `- ${shortTitle(n.title)} (edited ${new Date(n.mtime).toISOString().slice(0, 10)})`));
   sec(`Open tasks (${d.tasks.length})`, d.tasks.map(t => `- [ ] ${plainTask(t.text).replace(DUE_TEXT, '').trim()}${t.due ? ` (due ${t.due})` : ''} [${shortTitle(t.note.title)}]`), 10);
