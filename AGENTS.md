@@ -27,10 +27,31 @@ cp config.example.json config.json      # never commit config.json
 npm install
 npm run dev                              # http://localhost:7777  (also http://knowledge.localhost:7777)
 ```
-Always-on on macOS: `scripts/install-launchd.sh` (add `--label com.<name>.knowledge-map` to choose the service name, `--print` to preview, `--uninstall` to remove). It uses the `node` on the current PATH, so run it from a shell where `node -v` shows the version the user wants. Restart after editing `config.json` or `vault-plugin.ts`:
+Always-on on macOS: `scripts/install-launchd.sh` (add `--label com.<name>.knowledge-map` to choose the service name, `--print` to preview, `--uninstall` to remove). It uses the `node` on the current PATH, so run it from a shell where `node -v` shows the version the user wants. Restart after editing `config.json` or the server-side files (see Updating below):
 `launchctl kickstart -k gui/$(id -u)/<label>`. Logs: `~/Library/Logs/knowledge-map.log`.
 
 Verify before telling the user it works: server returns 200, the startup log line `[vault] <names>: N notes, M links, K unresolved` shows the expected counts (0 notes means a wrong path or a macOS permission problem), and open the page (screenshot if you can drive a browser).
+
+## Updating an existing install (do this when told "there are updates to the repo", "update the app", "pull the latest")
+Work out what the update needs from what actually changed, run only that, and report. Never touch the user's vaults or `config.json` while updating.
+
+1. **Before:** in the repo folder, note the current commit (`OLD=$(git rev-parse HEAD)`) and, if the app is running, the current `[vault] ...: N notes, M links, K unresolved` line (last one in the log, e.g. `~/Library/Logs/knowledge-map.log` for launchd). Run `git status`: `config.json`, `PLAN.md` and `TODO.md` are git-ignored and never conflict. If tracked files were edited locally, show the user and ask before `git stash` (pop it after the pull and report any conflict instead of resolving it by guessing).
+2. **Pull:** `git pull --ff-only`. If that refuses (local commits or a diverged branch), stop and ask the user. Then re-read this file: the update may have changed these instructions.
+3. **Decide from the diff** (`git diff --name-only $OLD HEAD`, and `git log --oneline $OLD..HEAD` for the summary):
+
+| Changed | Do |
+|---|---|
+| `package.json` or `package-lock.json` | `npm install`. Check `node -v` against the prerequisites above first; if Node is too old, stop and tell the user. |
+| `vite.config.ts`, `vault-plugin.ts`, `vault-load.ts`, `frontmatter.ts`, `rename-links.ts`, `append-text.ts`, `projects.ts` (the server side) | Restart the server: `launchctl kickstart -k gui/$(id -u)/<label>` for always-on (find the label with `launchctl list \| grep knowledge-map`), else stop and start `npm run dev`. Restarting when unsure is safe. |
+| only `src/` files | Nothing to run; the dev server hot-reloads. The user reloads the page once (Cmd+R, or the reload button in the top right). |
+| `mcp-server.ts`, any root `.ts` file, or `src/*.ts` | If the user registered the MCP server (`claude mcp list` shows `knowledge-map`), it runs the old code until Claude Code restarts or the user reconnects it with `/mcp`. Tell them. |
+| `config.example.json` | Compare it with their `config.json` and tell the user about new options. Never edit `config.json` without asking; back it up first if they say yes. |
+| `scripts/install-launchd.sh` | Preview with `--print` and the user's label; reinstall only if the generated service differs and the user agrees. |
+| `starter-vault/` | Their vaults are not updated automatically, and that is right. List what is new (skills in `starter-vault/.claude/skills/`, templates, README rules). Offer to copy a skill folder that their vault does not have yet (`cp -R starter-vault/.claude/skills/<skill> <vault>/.claude/skills/`); never overwrite their files, and do not run `new-vault.mjs --adopt` for this (with an existing README it adds a second rules file, `VAULT-RULES.md`). Rule or template changes are offered as a short summary for the user to accept, not applied. |
+| `.claude/skills/` in the repo | Agents pick it up on the next start; nothing to run. |
+
+4. **Verify:** `npx tsc --noEmit` passes, the server returns 200, and after a restart the log line shows the same counts as before (a drop to 0 notes means a path or macOS permission problem, see Conventions and gotchas). Open the page if you can drive a browser.
+5. **Report** in a few lines: the commits pulled (from `git log --oneline`), what you ran and why, what the user still has to do (reload the page, reconnect MCP, optional vault skills), and what they will notice (from the commit messages).
 
 ## Starter vault and vault skills
 `starter-vault/` is the template for a new, organized work vault: rules (`README.md`, with `{{PLACEHOLDERS}}` filled in by the script), the 16 note templates, an `index.md` hub, fictional `acme` example notes, and agent skills in `starter-vault/.claude/skills/` (`organize-vault` for the one-time cleanup and sanitizing of existing notes, `triage-inbox`, `lint-vault`, `distill`, `harvest-project`). `node scripts/new-vault.mjs <path> [--adopt] [--config] ...` copies it (see the header of the script for flags); `--adopt` adds only the scaffold to an existing vault and never overwrites a file. Keep everything in `starter-vault/` free of real names, customers and paths: it ships to everyone.
