@@ -3,13 +3,15 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import type { Note } from 'virtual:vault';
 import type { Colors } from './palettes';
-import { circlesData, RINGS, RELATIONS, agoText, bdayText, type Person, type Relation } from './circlesData';
+import { circlesData, RINGS, RELATIONS, agoText, bdayText, today, type Person, type Relation } from './circlesData';
+import { appendLine } from './api';
 
 // Circles (key o): people as a 3D ball of concentric shells around "me". The shell is how close someone is (circle: 1 to 4),
 // color and shape say who they are (relation). Each shell's people are grouped by relation: on a tilted orbit (a ring that
 // links them, with a tinted arc per group) while a shell holds up to ORBIT_MAX people, spread over the shell's surface in
 // wedges per group beyond that. A faint spoke runs from each person to the center, brighter the longer since the last contact.
-type Props = { notes: Note[]; colors: Colors; dark: boolean; right: number; selected: string | null; safe: boolean; onSelect: (id: string | null) => void; onClose: () => void; onAdd?: () => void };
+// Ties (partner, kids, links between person notes) are arcs between two people.
+type Props = { notes: Note[]; colors: Colors; dark: boolean; right: number; selected: string | null; safe: boolean; onSelect: (id: string | null) => void; onClose: () => void; onAdd?: () => void; onImport?: () => void };
 
 const RADII = [0, 120, 215, 310, 405];
 // per shell: orbit tilt, turn and roll (radians). Tilted close to face-on so a ring of names reads like a circle; dragging shows the ball
@@ -24,7 +26,7 @@ const store = { get: (k: string) => { try { return localStorage.getItem(k); } ca
 type Slot = { p: Person; shell: number; holder: THREE.Object3D; spin: THREE.Object3D; local: THREE.Vector3; pos: THREE.Vector3; lw: number; lab: boolean; left: boolean; css: [string, string, string, string] };   // css: last written transform, opacity, z-index, pointer-events
 type Scr = { sl: Slot; x: number; y: number; s: number; front: number; off: boolean };
 
-export default function Circles({ notes, colors, dark, right, selected, safe, onSelect, onClose, onAdd }: Props) {
+export default function Circles({ notes, colors, dark, right, selected, safe, onSelect, onClose, onAdd, onImport }: Props) {
   const d = useMemo(() => circlesData(notes), [notes]);
   const host = useRef<HTMLDivElement>(null);
   const dots = useRef(new Map<string, HTMLButtonElement>());
@@ -37,7 +39,7 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
   const api = useRef<{ fly: (id: string | null) => void } | null>(null);
   const moved = useRef(false);
   const hue = (r: Relation) => HUE[r][dark ? 1 : 0];
-  const key = d.people.map(p => p.note.id + ':' + p.circle + ':' + p.relation + ':' + p.status + ':' + p.since).join('|');
+  const key = d.people.map(p => p.note.id + ':' + p.circle + ':' + p.relation + ':' + p.status + ':' + p.since).join('|') + '#' + d.ties.map(t => t.a + '-' + t.b + t.kind).join('|');
 
   useEffect(() => {
     const el = host.current; if (!el || !d.people.length) return;
@@ -120,18 +122,55 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
       return mix(relC[sl.p.relation], u);
     };
 
+    // ties: a dashed arc from one person to the other that follows the shells (family warm, links gray), so it never reads as an orbit;
+    // lit when either end is open or hovered. With a crowd only the lit ones are drawn
+    const SEG = 15;   // dashes per tie (each dash is half of a step along the arc)
+    const ties = d.ties.map(t => ({ a: bySlot.get(t.a)!, b: bySlot.get(t.b)!, kind: t.kind })).filter(t => t.a && t.b);
+    const tp = new Float32Array(ties.length * SEG * 6), tc = new Float32Array(ties.length * SEG * 6);
+    const tg = new THREE.BufferGeometry();
+    tg.setAttribute('position', new THREE.BufferAttribute(tp, 3).setUsage(THREE.DynamicDrawUsage));
+    tg.setAttribute('color', new THREE.BufferAttribute(tc, 3).setUsage(THREE.DynamicDrawUsage));
+    const tm = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
+    if (ties.length) ball.add(new THREE.LineSegments(tg, tm));
+    disposables.push(tg, tm);
+    const ua = new THREE.Vector3(), ub = new THREE.Vector3(), q0 = new THREE.Vector3(), q1 = new THREE.Vector3();
+    const arcAt = (out: THREE.Vector3, A: THREE.Vector3, B: THREE.Vector3, t: number) => {
+      const ra = A.length(), rb = B.length();
+      out.copy(ua).multiplyScalar(1 - t).addScaledVector(ub, t);
+      if (out.lengthSq() < 1e-6) return out.copy(A).lerp(B, t);   // opposite sides: a straight line through the middle
+      return out.normalize().multiplyScalar((ra + (rb - ra) * t) * (1 + 0.07 * Math.sin(Math.PI * t)));
+    };
+
     // camera: rotation and zoom survive reloads (a logged call reloads the page)
     let zoom = 1;
     try { const c = JSON.parse(sessionStorage.getItem('ciCam') || 'null'); if (c?.q?.length === 4) ball.quaternion.fromArray(c.q); if (c?.z) zoom = c.z; else ball.rotation.x = 0.22; } catch { ball.rotation.x = 0.22; }
     const saveCam = () => { try { sessionStorage.setItem('ciCam', JSON.stringify({ q: ball.quaternion.toArray(), z: zoom })); } catch {} };
-    let W = 1, H = 1, fit = 1200;
+    let W = 1, H = 1, fit = 1200, cx = 0, cy = 0;
+    const head = el.parentElement?.querySelector('.ci-head > div') as HTMLElement | null;
     const resize = () => {
       W = el.clientWidth || 1; H = el.clientHeight || 1;
       renderer.setSize(W, H, false); cv.style.width = W + 'px'; cv.style.height = H + 'px';
-      camera.aspect = W / H; camera.updateProjectionMatrix();
-      fit = (RADII[4] * 1.18) / Math.tan((FOV / 2) * Math.PI / 180) / Math.min(1, camera.aspect);
+      // keep the ball clear of the side list and of the title and chips (narrow windows): it moves left or down and shrinks to fit the
+      // free area. The camera renders a window of a larger virtual view, so projection, dots and labels stay consistent
+      const R = RADII[4] * 1.18, tn = Math.tan((FOV / 2) * Math.PI / 180), sb = el.getBoundingClientRect();
+      const box = (x: Element) => { const b = x.getBoundingClientRect(); return { l: b.left - sb.left, r: b.right - sb.left, t: b.top - sb.top, b: b.bottom - sb.top }; };
+      let right = 0, top = 0;
+      const side = el.parentElement?.querySelector('.ci-side');
+      if (side && (side as HTMLElement).offsetParent) { const b = box(side); if (b.t < H / 2 && b.l < W / 2 + Math.min(W, H) / 2 / 1.18) right = Math.min(W - b.l + 8, W * 0.45); }
+      const rPx = Math.min(W - right, H) / 2 / 1.18, mid = (W - right) / 2;
+      if (head) {
+        let hr = 0, hb = 0;
+        head.querySelectorAll('.label, h1, p, .ci-chips > button').forEach(x => { const b = box(x); hr = Math.max(hr, b.r); hb = Math.max(hb, b.b); });
+        if (hr > mid - rPx * 0.8 && hb > H / 2 - rPx - 24) top = Math.min(hb + 10, H * 0.35);
+      }
+      const Wf = W + right, Hf = H + top;
+      camera.aspect = Wf / Hf;
+      if (right || top) camera.setViewOffset(Wf, Hf, right, 0, W, H); else camera.clearViewOffset();
+      camera.updateProjectionMatrix();
+      fit = R * Hf / tn / Math.min(H - top, W - right);
+      cx = mid; cy = Hf / 2;
     };
-    const ro = new ResizeObserver(resize); ro.observe(el); resize();
+    const ro = new ResizeObserver(resize); ro.observe(el); if (head) ro.observe(head); resize();
 
     // drag rotates the ball (with inertia), wheel zooms
     let drag: { x: number; y: number; t0x: number; t0y: number } | null = null, vx = 0, vy = 0, flying = false;
@@ -160,6 +199,7 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
 
     // labels: greedy placement by priority (open, hovered, inner circles, needs attention, facing you); a name that would overlap is hidden
     const placed: number[][] = [];
+    const few = slots.length <= 24;   // with few people every name is shown, also on the far side of the ball
     const labels = (scr: Scr[]) => {
       const sel = live.current.selected;
       const pr = (o: Scr) => o.sl.p.note.id === sel ? 1e6 : o.sl.p.note.id === hover.current ? 1e5 : (5 - o.sl.shell) * 100 + (o.sl.p.status === 'overdue' ? 60 : o.sl.p.status === 'due' ? 30 : 0) + o.front * 40;
@@ -175,7 +215,7 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
         // the name goes right of the dot, or left when the right side is taken; hidden only when both are
         const free = (box: number[]) => !placed.some(q => hit(box, q)) && !dotBox.some(q => q[5] !== id && hit(box, q));
         const R = [o.x + 10 * k, o.y - 9 * k, o.x + (16 + o.sl.lw) * k, o.y + 8 * k], L = [o.x - (16 + o.sl.lw) * k, o.y - 9 * k, o.x - 10 * k, o.y + 8 * k];
-        let ok = !o.off && (must || o.front > -0.35), left = false;
+        let ok = !o.off && (must || few || o.front > -0.35), left = false;
         if (ok && !must && !free(R)) { if (free(L)) left = true; else ok = false; }
         if (ok) placed.push(left ? L : R);
         if (left !== o.sl.left) { o.sl.left = left; b.classList.toggle('lf', left); }
@@ -217,6 +257,21 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
         sl.css = css;
         scr.push({ sl, x, y, s, front, off });
       });
+      if (ties.length) {
+        const hv = hover.current;
+        ties.forEach((t, i) => {
+          const lit = t.a.p.note.id === sel || t.b.p.note.id === sel || t.a.p.note.id === hv || t.b.p.note.id === hv;
+          const off = (hid.has(t.a.p.relation) && t.a.p.note.id !== sel) || (hid.has(t.b.p.relation) && t.b.p.note.id !== sel) || (many && !lit);
+          const c = off ? bg : lit ? mix(acc, 0.95) : t.kind === 'family' ? mix(relC.family, dark ? 0.7 : 0.62) : mix(ink, dark ? 0.45 : 0.4);
+          ua.copy(t.a.pos).normalize(); ub.copy(t.b.pos).normalize();
+          for (let k = 0; k < SEG; k++) {
+            arcAt(q0, t.a.pos, t.b.pos, (k + 0.25) / SEG); arcAt(q1, t.a.pos, t.b.pos, (k + 0.75) / SEG);
+            const o = (i * SEG + k) * 6;
+            tp.set([q0.x, q0.y, q0.z, q1.x, q1.y, q1.z], o); tc.set([c.r, c.g, c.b, c.r, c.g, c.b], o);
+          }
+        });
+        tg.attributes.position.needsUpdate = true; tg.attributes.color.needsUpdate = true;
+      }
       if (fr++ % 2 === 0 || drag || flying) labels(scr);
       for (const a of arcMats) a.m.opacity = hid.has(a.rel) ? 0.08 : 0.85;
       sg.attributes.position.needsUpdate = true; sg.attributes.color.needsUpdate = true;
@@ -226,7 +281,7 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
         v.set(0, RADII[s], 0).applyQuaternion(camera.quaternion).project(camera);
         r.style.transform = `translate(${((v.x + 1) / 2 * W).toFixed(1)}px, ${((1 - v.y) / 2 * H).toFixed(1)}px)`;
       }
-      if (meEl.current) meEl.current.style.transform = `translate(${W / 2}px, ${H / 2}px)`;
+      if (meEl.current) meEl.current.style.transform = `translate(${cx}px, ${cy}px)`;
       renderer.render(scene, camera);
     };
     raf = requestAnimationFrame(frame);
@@ -235,7 +290,7 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
     return () => {
       cancelAnimationFrame(raf); ro.disconnect(); saveCam();
       el.removeEventListener('pointerdown', down); removeEventListener('pointermove', move); removeEventListener('pointerup', up); el.removeEventListener('wheel', wheel);
-      disposables.forEach(x => x.dispose()); renderer.dispose(); cv.remove(); api.current = null;
+      disposables.forEach(x => x.dispose()); renderer.dispose(); renderer.forceContextLoss(); cv.remove(); api.current = null;
     };
   }, [key, colors, dark]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -272,13 +327,17 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
             <button key={r.key} className={hidden.has(r.key) ? 'off' : ''} onClick={() => toggle(r.key)} title={hidden.has(r.key) ? 'Show ' + r.label.toLowerCase() : 'Fade ' + r.label.toLowerCase()}>
               <i className={'ci-sw rel-' + r.key} />{r.label}<small>{count(r.key)}</small></button>))}</div>}
         </div>
-        <div className="ci-head-btns">{onAdd && <button className="btn primary" onClick={onAdd} title="Add a person  (a)">+ Add person</button>}
+        <div className="ci-head-btns">{onImport && d.people.length > 0 && <button className="btn" onClick={onImport} title="Add people from a contacts file (.vcf)">Import</button>}
+          {onAdd && <button className="btn primary" onClick={onAdd} title="Add a person  (a)">+ Add person</button>}
           <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close  (o or Esc)">&times;</button></div>
       </header>
 
       {!d.people.length
-        ? <div className="pv-empty ci-empty">{safe ? 'Safe mode hides personal notes. Leave Safe mode to see your circles.' : <>No people yet. Add a note with <code>type: person</code> and a <code>relation:</code> (family, friend, colleague, ex-colleague or acquaintance); the Personal vault's person template does this.</>}</div>
-        : <Side d={d} hidden={hidden} selected={selected} onSelect={onSelect} />}
+        ? <div className="pv-empty ci-empty">{safe ? 'Safe mode hides personal notes. Leave Safe mode to see your circles.' : <>
+          <p>No people yet. Each person is a note with a profile: family, friends, colleagues, who to call and when.</p>
+          {(onAdd || onImport) && <div className="ci-empty-btns">{onAdd && <button className="btn primary" onClick={onAdd}>+ Add your first person</button>}{onImport && <button className="btn" onClick={onImport}>Import contacts (.vcf)</button>}</div>}
+          <small>Any note with <code>type: person</code> and a <code>relation:</code> (family, friend, colleague, ex-colleague or acquaintance) shows up here too.</small></>}</div>
+        : <Side d={d} hidden={hidden} selected={selected} canLog={p => !safe && p.note.writable} onSelect={onSelect} />}
 
     </div>
   );
@@ -287,15 +346,32 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
 const relLabel = (p: Person) => [p.relationship, p.relation.replace('-', ' ')].filter((x, i, a) => x && a.indexOf(x) === i).join(', ');
 
 // side list: Reach out, Birthdays, Everyone (grouped by circle), with a search over names, relationships and locations
-function Side({ d, hidden, selected, onSelect }: { d: ReturnType<typeof circlesData>; hidden: Set<Relation>; selected: string | null; onSelect: (id: string) => void }) {
+// Reach out rows have a Log button: pick call, text, video or met and a "- today kind: checked in" line goes under ## Log
+function Side({ d, hidden, selected, canLog, onSelect }: { d: ReturnType<typeof circlesData>; hidden: Set<Relation>; selected: string | null; canLog: (p: Person) => boolean; onSelect: (id: string) => void }) {
   const [tab, setTab] = useState<'reach' | 'bday' | 'all'>(() => { const t = store.get('ciTab'); return t === 'bday' || t === 'all' ? t : 'reach'; });
   useEffect(() => store.set('ciTab', tab), [tab]);
   const [q, setQ] = useState('');
   const qq = q.trim().toLowerCase();
   const keep = (p: Person) => !hidden.has(p.relation) && (!qq || (p.name + ' ' + p.relationship + ' ' + p.relation + ' ' + (p.note.meta.location || '')).toLowerCase().includes(qq));
-  const row = (p: Person, sub: string) => (
-    <li key={p.note.id} className={p.note.id === selected ? 'cur' : ''}>
-      <button onClick={() => onSelect(p.note.id)}><i className={'ci-sw rel-' + p.relation} /><b>{p.name}</b><span>{sub}</span></button>
+  const [logFor, setLogFor] = useState<string | null>(null);
+  const [logged, setLogged] = useState<Record<string, string>>({});   // id -> 'saving' | 'ok' | error text
+  const log = async (p: Person, kind: string) => {
+    const id = p.note.id; setLogFor(null); setLogged(x => ({ ...x, [id]: 'saving' }));
+    let res = 'ok';
+    try { const r = await appendLine(p.note.vault, p.note.path, 'Log', `- ${today()} ${kind}: checked in`); if (r.status !== 200) res = r.json.error || 'HTTP ' + r.status; }
+    catch (e) { res = String(e); }
+    setLogged(x => ({ ...x, [id]: res }));   // on success the page refreshes from the server a moment later
+  };
+  const quick = (p: Person) => {
+    const id = p.note.id, st = logged[id];
+    if (st) return <em className={'ci-qdone' + (st === 'saving' || st === 'ok' ? '' : ' err')} title={st}>{st === 'saving' ? 'Saving' : st === 'ok' ? 'Logged' : 'Failed'}</em>;
+    if (logFor === id) return <span className="ci-qlog" role="group" aria-label={'Log contact with ' + p.name}>{['call', 'text', 'video', 'met'].map(k => <button key={k} onClick={() => log(p, k)}>{k}</button>)}<button aria-label="Cancel" onClick={() => setLogFor(null)}>&times;</button></span>;
+    return <button className="ci-qbtn" onClick={() => setLogFor(id)} title={'Log contact with ' + p.name + ' today'}>Log</button>;
+  };
+  const row = (p: Person, sub: string, withLog = false) => (
+    <li key={p.note.id} className={(p.note.id === selected ? 'cur' : '') + (logFor === p.note.id ? ' logging' : '')}>
+      <button className="ci-pick" onClick={() => onSelect(p.note.id)}><i className={'ci-sw rel-' + p.relation} /><b>{p.name}</b><span>{sub}</span></button>
+      {withLog && canLog(p) && quick(p)}
     </li>
   );
   const reach = d.reach.filter(keep), bdays = d.birthdays.filter(keep), all = d.people.filter(keep);
@@ -307,7 +383,7 @@ function Side({ d, hidden, selected, onSelect }: { d: ReturnType<typeof circlesD
       </div>
       <input className="ci-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Find a person" aria-label="Find a person" />
       <div className="ci-list">
-        {tab === 'reach' && (reach.length ? <ul>{reach.map(p => row(p, p.status === 'never' ? `${RINGS[p.circle - 1].label}, nothing logged` : `${agoText(p.since)}, every ${p.every}d`))}</ul> : <p className="ci-none">{qq ? 'Nobody matches.' : 'Everyone is up to date.'}</p>)}
+        {tab === 'reach' && (reach.length ? <ul>{reach.map(p => row(p, p.status === 'never' ? `${RINGS[p.circle - 1].label}, nothing logged` : `${agoText(p.since)}, every ${p.every}d`, true))}</ul> : <p className="ci-none">{qq ? 'Nobody matches.' : 'Everyone is up to date.'}</p>)}
         {tab === 'bday' && <>{bdays.length ? <ul>{bdays.map(p => row(p, bdayText(p)))}</ul> : <p className="ci-none">None in the next 60 days.</p>}
           {d.noBirthday > 0 && <p className="ci-none">{d.noBirthday} of {d.people.length} have no <code>birthday:</code> yet.</p>}</>}
         {tab === 'all' && (all.length ? RINGS.map(r => { const ps = all.filter(p => p.circle === r.n); return ps.length ? <div key={r.n}><h3>{r.label} <small>{ps.length}</small></h3><ul>{ps.map(p => row(p, `${relLabel(p)}, ${agoText(p.since)}`))}</ul></div> : null; }) : <p className="ci-none">Nobody matches.</p>)}

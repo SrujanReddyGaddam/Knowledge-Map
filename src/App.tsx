@@ -6,7 +6,7 @@ import Browse from './Browse';
 import Tasks from './Tasks';
 import { collectTasks } from './taskScan';
 import { loadSeen, saveSeen, type Seen } from './seen';
-import { trashNote } from './api';
+import { trashNote, reloadHold } from './api';
 import { readDraft, clearDraft, type Draft } from './Editor';
 import { shortTitle } from './util';
 import { play, tick, VARIANTS, setVolume } from './sound';
@@ -29,6 +29,7 @@ import { shortestPath } from './graphPath';
 import { contextPack } from './contextPack';
 import Circles from './Circles';
 import AddPerson, { peopleVault } from './AddPerson';
+import ImportContacts from './ImportContacts';
 import { isPerson } from './circlesData';
 
 const byId = new Map(vault.notes.map(n => [n.id, n]));
@@ -84,6 +85,9 @@ const toastAfterReload = (() => { try { const t = sessionStorage.getItem('kmToas
 type View = 'tasks' | 'today' | 'cockpit' | 'week' | 'circles' | null;
 const VIEWS = ['tasks', 'today', 'cockpit', 'week', 'circles'];
 const hasPeople = vault.notes.some(isPerson);
+// people can be added (a writable vault, not in Safe mode); Circles is offered then too, so the first person has a home
+const canAddPeople = !!peopleVault() && !safeMode;
+const showCircles = hasPeople || canAddPeople;
 const hashId = () => { const h = decodeURIComponent(location.hash.slice(1)); return byId.has(h) ? h : null; };
 
 export default function App() {
@@ -113,7 +117,8 @@ export default function App() {
   const cycleColor = () => setColorBy(c => (c === 'none' ? 'type' : c === 'type' ? 'age' : 'none'));
   useEffect(() => { try { localStorage.setItem('colorBy', colorBy); } catch {} }, [colorBy]);
   const [newOpen, setNewOpen] = useState(false);
-  const [addPerson, setAddPerson] = useState(false);
+  const [addPerson, setAddPerson] = useState<false | { name: string }>(false);
+  const [importOpen, setImportOpen] = useState(false);
   // the Browse drawer starts below the search row and the active-filter chips (which wrap and grow), never underneath them
   const headRef = useRef<HTMLDivElement>(null);
   const [browseTop, setBrowseTop] = useState(70);
@@ -186,6 +191,8 @@ export default function App() {
   const [scope, setScope] = useState<Scope>(() => { try { return localStorage.getItem('searchScope') === 'names' ? 'names' : 'all'; } catch { return 'all'; } });
   useEffect(() => { try { localStorage.setItem('searchScope', scope); } catch {} }, [scope]);
   const [cursor, setCursor] = useState(0);
+  const [resWide, setResWide] = useState(() => { try { return localStorage.getItem('searchWide') === '1'; } catch { return false; } });
+  const [resAll, setResAll] = useState(false);
   const [filterOpen, setFilterOpen] = useState(() => new URLSearchParams(location.search).has('filter'));
   const [info, setInfo] = useState(() => new URLSearchParams(location.search).has('info'));
   const [soundId, setSoundId] = useState(() => { try { return localStorage.getItem('soundId') || (localStorage.getItem('sound') === '1' ? 'soft' : 'off'); } catch { return 'off'; } });
@@ -246,7 +253,11 @@ export default function App() {
     return set;
   }, [res, section, tags, vaultSel, focusSet, facets, workspace]);
   const hits = useMemo(() => (res && matches ? res.hits.filter(h => matches.has(h.note.id)) : []), [res, matches]);
-  useEffect(() => setCursor(0), [query, scope]);
+  // matches the filters, workspace or focus hide: listed below the hits so a note is never silently unfindable
+  const outside = useMemo(() => (res && matches ? res.hits.filter(h => !matches.has(h.note.id)) : []), [res, matches]);
+  useEffect(() => { setCursor(0); setResAll(false); }, [query, scope]);
+  const toggleResWide = () => setResWide(v => { try { localStorage.setItem('searchWide', v ? '0' : '1'); } catch {} return !v; });
+  const resShown = resAll ? hits.length : Math.min(hits.length, 25);
   const facetCount = FACETS.reduce((a, f) => a + (facets[f]?.length || 0), 0);
   const filterCount = (section ? 1 : 0) + vaultSel.length + tags.length + (focus ? 1 : 0) + facetCount;
   const clearFilters = () => { setSection(null); setTags([]); setVaultSel([]); setFocus(null); setFacets({}); };
@@ -308,8 +319,10 @@ export default function App() {
     { id: 'week', label: 'Weekly review', hint: 'this week per customer, copy as markdown', keys: 'w', run: () => setView('week') },
     { id: 'tasks', label: 'Tasks', hint: 'every open checkbox', keys: 't', run: () => setView('tasks') },
     { id: 'cockpit', label: 'Customer cockpit', hint: 'pick a customer', keys: 'k', run: () => openCockpit(null) },
-    ...(peopleVault() && !safeMode ? [{ id: 'addperson', label: 'Add person', hint: 'family, friend, colleague... with a profile', keys: 'a', run: () => setAddPerson(true) }] : []),
-    ...(hasPeople ? [{ id: 'circles', label: 'Circles', hint: 'friends and family, who to reach out to', keys: 'o', run: () => setView('circles') }] : []),
+    ...(canAddPeople ? [{ id: 'addperson', label: 'Add person', hint: 'family, friend, colleague... with a profile', keys: 'a', run: () => setAddPerson({ name: '' }) },
+      { id: 'importcontacts', label: 'Import contacts', hint: 'add people from a .vcf file (Contacts, Google, Outlook)', run: () => setImportOpen(true) }] : []),
+    { id: 'reload', label: 'Reload', hint: 'reload the page (unsaved edits ask first)', run: () => location.reload() },
+    ...(showCircles ? [{ id: 'circles', label: 'Circles', hint: 'friends and family, who to reach out to', keys: 'o', run: () => setView('circles') }] : []),
     ...customers.map(c => ({ id: 'ws-' + c, label: 'Workspace: ' + pretty(c), hint: 'this customer as the context', run: () => enterWorkspace(c) })),
     ...(workspace ? [{ id: 'ws-leave', label: 'Leave workspace', hint: pretty(workspace), keys: 'g', run: leaveWorkspace }] : []),
     ...customers.map(c => ({ id: 'ck-' + c, label: 'Cockpit: ' + c.replace(/-/g, ' '), hint: 'customer', run: () => openCockpit(c) })),
@@ -348,8 +361,8 @@ export default function App() {
       else if (e.key === 't') toggleView('tasks');
       else if (e.key === 'h') toggleView('today');
       else if (e.key === 'w') toggleView('week');
-      else if (e.key === 'o' && hasPeople) toggleView('circles');
-      else if (e.key === 'a' && peopleVault() && !safeMode && !editIdRef.current) { e.preventDefault(); setAddPerson(true); }
+      else if (e.key === 'o' && showCircles) toggleView('circles');
+      else if (e.key === 'a' && canAddPeople && !editIdRef.current) { e.preventDefault(); setAddPerson({ name: '' }); }
       else if (e.key === 'k') { if (tasksRef.current === 'cockpit') setView(null); else openCockpit(workspaceRef.current || selNote?.customer || customer); }
       else if (e.key === 'g' && customers.length) { e.preventDefault(); if (workspaceRef.current) leaveWorkspace(); else setWsPick(true); }
       else if (e.key === 'c' && dailyVault() && !editIdRef.current && !safeMode) { e.preventDefault(); setCaptureOpen(true); }
@@ -367,7 +380,7 @@ export default function App() {
     const bu = (e: BeforeUnloadEvent) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ''; } };
     addEventListener('beforeunload', bu);
     const hot = (import.meta as any).hot;
-    const own = () => { if (editIdRef.current) staleRef.current = true; else reloadSoon(); };
+    const own = () => { if (editIdRef.current || reloadHold.n) staleRef.current = true; else reloadSoon(); };
     hot?.on('km:self-write', own);
     return () => { removeEventListener('beforeunload', bu); hot?.off?.('km:self-write', own); };
   }, []);
@@ -387,7 +400,7 @@ export default function App() {
         <div className="search-row">
           <input id="search" value={query} onChange={e => setQuery(e.target.value)} placeholder={"Search notes   /  or  \u2318O"} autoComplete="off" spellCheck={false}
             onKeyDown={e => {
-              const shown = Math.min(hits.length, 25);
+              const shown = resShown;
               if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(shown - 1, c + 1)); }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setCursor(c => Math.max(0, c - 1)); }
               else if (e.key === 'Enter' && hits[cursor]) { select(hits[cursor].note.id); setQuery(''); (e.target as HTMLElement).blur(); }
@@ -402,7 +415,7 @@ export default function App() {
           {customers.length > 0 && <button className={'icon-btn' + (view === 'cockpit' ? ' on' : '')} onClick={() => (view === 'cockpit' ? setView(null) : openCockpit(selNote?.customer || customer))} aria-label="Customer cockpit" title="Customer cockpit  (k)">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="M2.5 14V4.5l5-2.5v12M7.5 14V6.5l6 2.5v5M1.5 14h13M4.5 6.5v.01M4.5 9v.01M4.5 11.5v.01M10 10.5v.01M10 12.5v.01" strokeLinecap="round" /></svg>
           </button>}
-          {hasPeople && <button className={'icon-btn' + (view === 'circles' ? ' on' : '')} onClick={() => toggleView('circles')} aria-label="Circles" title="Circles: friends and family, who to reach out to  (o)">
+          {showCircles && <button className={'icon-btn' + (view === 'circles' ? ' on' : '')} onClick={() => toggleView('circles')} aria-label="Circles" title="Circles: friends and family, who to reach out to  (o)">
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="1.4" fill="currentColor" /><circle cx="8" cy="8" r="3.9" /><ellipse cx="8" cy="8" rx="6.5" ry="3" transform="rotate(-28 8 8)" /></svg>
           </button>}
           <button className={'icon-btn' + (tasksOpen ? ' on' : '')} onClick={() => toggleView('tasks')} aria-label="Tasks" title={`Tasks: ${allTasks.length} open checkboxes from all notes  (t)`}>
@@ -464,16 +477,29 @@ export default function App() {
           </div>
         )}
         {q && (
-          <div className="results">
-            <div className="res-head"><span>{hits.length} {hits.length === 1 ? 'result' : 'results'}</span>{scopeSeg}</div>
-            {hits.length > 0 ? hits.slice(0, 25).map((h, i) => (
+          <div className={'results' + (resWide ? ' wide' : '')} style={resWide ? { width: `min(860px, calc(100vw - ${panelW + 60}px))` } : undefined}>
+            <div className="res-head"><span>{hits.length} {hits.length === 1 ? 'result' : 'results'}</span><span className="res-tools">{scopeSeg}
+              <button className="res-expand" onClick={toggleResWide} aria-label={resWide ? 'Shrink results' : 'Expand results'} title={resWide ? 'Shrink results' : 'Expand results: wider and taller'}>
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{resWide ? <path d="M6.5 2.5v4h-4M9.5 13.5v-4h4M6.5 6.5 2 2M9.5 9.5 14 14" /> : <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" />}</svg>
+              </button></span></div>
+            {hits.length > 0 ? hits.slice(0, resShown).map((h, i) => (
               <button key={h.note.id} className={i === cursor ? 'cur' : ''} onMouseEnter={() => setCursor(i)} onClick={() => { select(h.note.id); setQuery(''); }}>
                 <small>{h.note.section.replace(/-/g, ' ')}</small>
                 <span className="res-title">{highlight(shortTitle(h.note.title), res?.terms || []).map((p, k) => p.m ? <mark key={k}>{p.t}</mark> : p.t)}</span>
                 {h.snippet && <span className="snip">{highlight(h.snippet, res?.terms || []).map((p, k) => p.m ? <mark key={k}>{p.t}</mark> : p.t)}</span>}
               </button>
-            )) : <div className="empty">No notes match.{scope === 'names' && <button className="link" onClick={() => setScope('all')}>Search inside note text too</button>}</div>}
-            {hits.length > 25 && <div className="res-more">Showing 25 of {hits.length}. All matches are on the map.</div>}
+            )) : <div className="empty">{outside.length ? 'Nothing matches inside the current filters.' : 'No notes match.'}{scope === 'names' && <button className="link" onClick={() => setScope('all')}>Search inside note text too</button>}</div>}
+            {hits.length > resShown && <div className="res-more">Showing {resShown} of {hits.length}. All matches are on the map. <button className="link" onClick={() => setResAll(true)}>Show all</button></div>}
+            {outside.length > 0 && <>
+              <div className="res-outside">{outside.length} more outside your filters{workspace ? ', workspace' : ''}{focus ? ', focus' : ''}</div>
+              {outside.slice(0, resAll ? outside.length : 8).map(h => (
+                <button key={h.note.id} className="out" onClick={() => { select(h.note.id); setQuery(''); }}>
+                  <small>{h.note.section.replace(/-/g, ' ')}</small>
+                  <span className="res-title">{highlight(shortTitle(h.note.title), res?.terms || []).map((p, k) => p.m ? <mark key={k}>{p.t}</mark> : p.t)}</span>
+                </button>
+              ))}
+              {!resAll && outside.length > 8 && <div className="res-more"><button className="link" onClick={() => setResAll(true)}>Show all {outside.length}</button></div>}
+            </>}
             <div className="res-tips">Tips: <code>"exact phrase"</code> <code>-skip</code> <code>tag:agents</code> <code>vault:work</code> <code>path:wiki</code> <code>type:bug</code> <code>-status:stale</code></div>
           </div>
         )}
@@ -483,13 +509,18 @@ export default function App() {
         {changed.size > 0 && <> &middot; <button onClick={() => { try { localStorage.setItem('browseTab', 'new'); } catch {} setBrowseKey(k => k + 1); setBrowse(true); setIntroMsg(false); }}>{changed.size} updated since you last looked</button></>}
       </div>}
  {tasksOpen && <Tasks right={panelW} tasks={allTasks} vaults={[...new Set(allTasks.map(t => t.note.vault))]} selected={selected} current={selNote} onSelect={select} onClose={() => setView(null)} canTick={!safeMode} />}
- {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} onCircles={hasPeople ? () => setView('circles') : undefined} />}
- {view === 'circles' && <Circles notes={vault.notes} colors={colors} dark={dark} right={panelW} selected={selected} safe={safeMode} onSelect={id => select(id)} onClose={() => setView(null)} onAdd={peopleVault() && !safeMode ? () => setAddPerson(true) : undefined} />}
+ {view === 'today' && <Today right={panelW} notes={vault.notes} tasks={allTasks} current={selNote} customers={customers} canTick={!safeMode} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} onCapture={() => setCaptureOpen(true)} onDaily={openDaily} onWeek={() => setView('week')} onCircles={hasPeople ? () => setView('circles') : undefined} onAddPerson={canAddPeople ? () => setAddPerson({ name: '' }) : undefined} />}
+ {view === 'circles' && <Circles notes={vault.notes} colors={colors} dark={dark} right={panelW} selected={selected} safe={safeMode} onSelect={id => select(id)} onClose={() => setView(null)} onAdd={canAddPeople ? () => setAddPerson({ name: '' }) : undefined} onImport={canAddPeople ? () => setImportOpen(true) : undefined} />}
  {view === 'week' && <Week right={panelW} notes={vault.notes} customers={customers} selected={selected} onSelect={select} onClose={() => setView(null)} onCockpit={openCockpit} />}
  {view === 'cockpit' && <Cockpit customer={customer} customers={customers} right={panelW} notes={vault.notes} tasks={allTasks} changed={changed} canTick={!safeMode} selected={selected} scope={scopeNow} onScope={s => setCkScope({ customer: customer || '', ...s })} onCustomer={setCustomer} onSelect={select} onFacet={(f, v) => { setView(null); pickFacet(f, v); }} onClose={() => setView(null)} />}
  {browse && <Browse key={browseKey} top={browseTop} notes={vault.notes} byId={byId} brokenLinks={vault.brokenLinks} lint={lintIssues} changed={changed} onMarkAllSeen={markAllSeen} hl={hl} onHl={setHl} selected={selected} onSelect={select} onClose={() => setBrowse(false)} />}
       <div className="top-right" style={{ right: panelW + 20 }}>
-        <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
+        <div className="tr-btns">
+          <button className="icon-btn" onClick={() => location.reload()} aria-label="Reload" title="Reload the page  (\u2318R)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13.2 8.6A5.3 5.3 0 1 1 11.6 4.3" /><path d="M12.2 1.8v2.9H9.3" /></svg>
+          </button>
+          <button className={'icon-btn' + (info ? ' on' : '')} onClick={() => setInfo(v => !v)} aria-label="About this map" title="About">i</button>
+        </div>
         {info && (
           <div className="info-pop" role="dialog">
             <div className="eyebrow">Knowledge map</div>
@@ -551,8 +582,9 @@ export default function App() {
         {AGE_BUCKETS.map(b => <span key={b.label}><i className={'type-dot' + (b.light ? '' : ' neutral')} style={b.light ? { background: dark ? b.dark : b.light } : undefined} />{b.label}</span>)}
       </div>}
       {safeMode && <button className="safe-badge" onClick={() => setSafeMode(false)} title="Click to leave safe mode">Safe mode: {vault.hiddenCount} notes hidden</button>}
-      {addPerson && <AddPerson onClose={() => setAddPerson(false)} />}
-      {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} />}
+      {addPerson && <AddPerson name={addPerson.name} onClose={() => setAddPerson(false)} onImport={() => { setAddPerson(false); setImportOpen(true); }} />}
+      {importOpen && <ImportContacts onClose={() => setImportOpen(false)} />}
+      {newOpen && <NewNote vaults={vault.writableVaults} current={selNote} onClose={() => setNewOpen(false)} onPerson={canAddPeople ? name => { setNewOpen(false); setAddPerson({ name }); } : undefined} />}
       {captureOpen && !safeMode && dailyVault() && <Capture vaults={vault.writableVaults} onClose={() => setCaptureOpen(false)}
         onDone={(v, p) => { const m = `Captured to ${v}: ${p}`; try { sessionStorage.setItem('kmToast', m); } catch {} setCaptureOpen(false); setToast(m); }} />}
       {paletteOpen && <Palette actions={actions} findNotes={findNotes} onOpen={id => select(id)} onClose={() => setPaletteOpen(false)} />}

@@ -1,8 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { Note } from 'virtual:vault';
 import vault from './data';
-import { personOf, logLines, RINGS, RELATIONS, agoText, today, type Relation } from './circlesData';
-import { PROFILE_FIELDS, RELATIONSHIPS, age, asks, datedItems, journalContacts, nextYearly, yamlValue, yamlList, fmtDate } from './people';
+import { personOf, logLines, tiesOf, isPerson, RINGS, RELATIONS, agoText, today, type Relation } from './circlesData';
+import { PROFILE_FIELDS, RELATIONSHIPS, age, asks, datedItems, journalContacts, nextYearly, yamlValue, yamlList, fmtDate, validDate } from './people';
 import { appendLine, rawNote, saveNote } from './api';
 import { setFrontmatter } from './review';
 
@@ -12,6 +12,12 @@ import { setFrontmatter } from './review';
 type Props = { note: Note; canWrite: boolean; resolve: (from: Note, name: string) => Note | undefined; onNav: (id: string) => void };
 
 const journal = journalContacts(vault.notes);   // the page reloads on every vault change, so once per load is enough
+// people tied to a person (partner, kids, links either way), built on first use
+let tied: Map<string, string[]> | null = null;
+const tiedTo = (id: string) => {
+  if (!tied) { tied = new Map(); for (const t of tiesOf(vault.notes.filter(isPerson).map(n => personOf(n)))) { tied.set(t.a, [...(tied.get(t.a) || []), t.b]); tied.set(t.b, [...(tied.get(t.b) || []), t.a]); } }
+  return tied.get(id) || [];
+};
 const ADD = [
   { key: 'log', label: 'Log', heading: 'Log', ph: 'What did you talk about?' },
   { key: 'remember', label: 'Remember', heading: 'Worth remembering', ph: 'Something worth remembering' },
@@ -19,7 +25,6 @@ const ADD = [
   { key: 'ask', label: 'Ask next time', heading: 'Ask next time', ph: 'Ask about...' },
 ] as const;
 const KINDS = ['call', 'text', 'video', 'met', 'event'];
-const DATE_RE = /^(\d{4}-)?\d{1,2}-\d{1,2}$/;
 const when = (days: number | null, what: string, n: number | null, unit: string) =>
   days === null ? '' : `${what} ${days === 0 ? 'today' : days === 1 ? 'tomorrow' : 'in ' + days + ' days'}${n ? ` (${n}${unit})` : ''}`;
 
@@ -73,6 +78,8 @@ export default function PersonProfile({ note, canWrite, resolve, onNav }: Props)
   if (m.partner) facts.push(['Partner', linkOr(m.partner)]);
   if (m.kids) facts.push(['Kids', linkOr(m.kids)]);
   if (m.how_met || m.since) facts.push(['Known', [m.how_met, m.since && 'since ' + m.since].filter(Boolean).join(', ')]);
+  const ties = tiedTo(note.id).map(id => vault.notes.find(n => n.id === id)).filter((n): n is Note => !!n);
+  if (ties.length) facts.push(['Connected', <span className="pp-ties">{ties.map(t => <button key={t.id} className="link" onClick={() => onNav(t.id)}>{t.title}</button>)}</span>]);
   if (m.interests) facts.push(['Interests', <span className="pp-tags">{m.interests.split(',').map(x => x.trim()).filter(Boolean).map(x => <em key={x}>{x}</em>)}</span>]);
   const logs = useMemo(() => logLines(note.body).sort((x, y) => y.date.localeCompare(x.date)).slice(0, 3), [note]);
   const open = useMemo(() => asks(note.body), [note]);
@@ -103,7 +110,7 @@ export default function PersonProfile({ note, canWrite, resolve, onNav }: Props)
 
       <div className="pp-brief">
         <div className="label">Before you call</div>
-        <p className={'pp-last ' + p.status}>Last contact {agoText(p.since)}{p.last && ` (${fmtDate(p.last)}${p.lastKind ? ', ' + p.lastKind : ''})`} · {ring.label.toLowerCase()}, {isFinite(p.every) ? `every ${p.every} days` : 'no check-in rhythm'}{p.status === 'overdue' && p.since !== null ? `, ${p.since - p.every} days late` : ''}</p>
+        <p className={'pp-last ' + p.status}>{p.since === null ? 'No contact logged yet' : 'Last contact ' + agoText(p.since)}{p.last && ` (${fmtDate(p.last)}${p.lastKind ? ', ' + p.lastKind : ''})`} · {ring.label.toLowerCase()}, {isFinite(p.every) ? `every ${p.every} days` : 'no check-in rhythm'}{p.status === 'overdue' && p.since !== null ? `, ${p.since - p.every} days late` : ''}</p>
         {open.length > 0 && <><h4>Ask about</h4><ul>{open.map((x, i) => <li key={i}>{x}</li>)}</ul></>}
         {logs.length > 0 && <><h4>Recent</h4><ul>{logs.map((l, i) => <li key={i}><small>{fmtDate(l.date)}{l.kind && ', ' + l.kind}</small> {l.text}</li>)}</ul></>}
         {remember.length > 0 && <><h4>Worth remembering</h4><ul>{remember.map((l, i) => <li key={i}>{l.date && <small>{fmtDate(l.date)}</small>} {l.text}</li>)}</ul></>}
@@ -149,7 +156,7 @@ function EditProfile({ note, busy, onCancel, onSave }: { note: Note; busy: boole
   const [bad, setBad] = useState('');
   const set = (k: string, x: string) => setV(o => ({ ...o, [k]: x }));
   const submit = async () => {
-    for (const k of ['birthday', 'anniversary']) if (v[k].trim() && !DATE_RE.test(v[k].trim())) { setBad(`${k}: use YYYY-MM-DD, or MM-DD without the year`); return; }
+    for (const k of ['birthday', 'anniversary']) if (v[k].trim() && !validDate(v[k])) { setBad(`${k}: a real date, YYYY-MM-DD or MM-DD without the year`); return; }
     if (v.since.trim() && !/^\d{4}$/.test(v.since.trim())) { setBad('Known since: a year like 2010'); return; }
     setBad('');
     const before = init(), kv: Record<string, string> = {};

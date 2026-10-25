@@ -14,11 +14,11 @@ import { circlesData, agoText, RINGS } from './circlesData';
 // Today view (key h): what needs doing today, where each code project was left off, and what was captured or edited today.
 type Props = {
   right: number; notes: Note[]; tasks: Task[]; current: Note | null; customers: string[]; canTick: boolean;
-  onSelect: (id: string) => void; onClose: () => void; onCockpit: (c: string) => void; onCapture: () => void; onDaily: () => void; onWeek: () => void; onCircles?: () => void;
+  onSelect: (id: string) => void; onClose: () => void; onCockpit: (c: string) => void; onCapture: () => void; onDaily: () => void; onWeek: () => void; onCircles?: () => void; onAddPerson?: () => void;
 };
 const OLD = 30 * 864e5;
 
-export default function Today({ right, notes, tasks, current, customers, canTick, onSelect, onClose, onCockpit, onCapture, onDaily, onWeek, onCircles }: Props) {
+export default function Today({ right, notes, tasks, current, customers, canTick, onSelect, onClose, onCockpit, onCapture, onDaily, onWeek, onCircles, onAddPerson }: Props) {
   const a = useTaskActions();
   const { list, err, refresh } = useProjects();
   const [older, setOlder] = useState(false);
@@ -80,9 +80,11 @@ export default function Today({ right, notes, tasks, current, customers, canTick
           {older && <div className="rc-grid">{stale.map(p => <ResumeCard key={p.path} p={p} customer={customerOf(p, customers)} onCustomer={onCockpit} />)}</div>}
         </section>}
 
-        {people && <section className="pv-sec">
-          <div className="pv-sec-head"><h2>People</h2><small>{people.events.length + people.reach.length}</small>{onCircles && <button className="link" onClick={onCircles}>Open Circles</button>}</div>
-          {people.events.length || people.reach.length ? <ul className="pv-notes">
+        {(people || onAddPerson) && <section className="pv-sec">
+          <div className="pv-sec-head"><h2>People</h2>{people && <small>{people.events.length + people.reach.length}</small>}
+            {onAddPerson && <button className="link" onClick={onAddPerson} title="Add a person  (a)">+ Add person</button>}{people && onCircles && <button className="link" onClick={onCircles}>Open Circles</button>}</div>
+          {!people ? <div className="pv-empty">Nobody yet. Add family, friends and colleagues to see birthdays and who to reach out to here.</div>
+          : people.events.length || people.reach.length ? <ul className="pv-notes">
             {people.events.map(e => <li key={'e' + e.p.note.id + e.what}><button onClick={() => onSelect(e.p.note.id)}><b>{e.p.name}</b><span>{e.what}</span></button></li>)}
             {people.reach.map(p => <li key={'r' + p.note.id}><button onClick={() => onSelect(p.note.id)}><b>{p.name}</b><span>{p.status === 'never' ? `${RINGS[p.circle - 1].label} circle, no contact logged yet` : `last contact ${agoText(p.since)}, every ${p.every} days`}</span></button></li>)}
           </ul> : <div className="pv-empty">No birthdays this week and nobody overdue.</div>}

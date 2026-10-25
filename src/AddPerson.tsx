@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react';
 import vault from './data';
 import { createNote } from './api';
 import { RINGS, isPerson, type Relation } from './circlesData';
-import { RELATIONSHIPS, slugify, yamlValue } from './people';
+import { RELATIONSHIPS, slugify, yamlValue, validDate } from './people';
 import { RelationPicker, DateField } from './PersonProfile';
 
 // Add person (key a, Circles + button, palette): one short form that classifies the person (who they are, how close)
 // and writes a full people/<name>.md profile in the vault that already holds people (else the first writable vault).
-type Props = { onClose: () => void };
+type Props = { name?: string; onClose: () => void; onImport?: () => void };
 
 // the vault that holds most person notes among the writable ones, else one named Personal, else the first writable
 export function peopleVault() {
@@ -15,8 +15,7 @@ export function peopleVault() {
   const best = [...w].sort((a, b) => count(b) - count(a))[0];
   return best && count(best) > 0 ? best : w.find(v => /personal/i.test(v)) || w[0] || '';
 }
-const CIRCLE_FOR: Record<Relation, number> = { family: 2, friend: 2, colleague: 3, 'ex-colleague': 4, acquaintance: 4 };
-const DATE_RE = /^(\d{4}-)?\d{1,2}-\d{1,2}$/;
+export const CIRCLE_FOR: Record<Relation, number> = { family: 2, friend: 2, colleague: 3, 'ex-colleague': 4, acquaintance: 4 };
 
 export function personText(f: Record<string, string>, today: string) {
   const y = (k: string) => yamlValue(f[k] || '');
@@ -35,7 +34,7 @@ anniversary:
 checkin_days:
 location: ${y('location')}
 hometown:
-address:
+address: ${y('address')}
 company: ${y('company')}
 role: ${y('role')}
 phone: ${y('phone')}
@@ -63,9 +62,9 @@ ${about ? '\n' + about.replace(/\r/g, '') + '\n' : ''}
 ${f.first ? `\n- ${today} ${f.firstKind || 'call'}: ${f.first.replace(/\s+/g, ' ').trim()}\n` : ''}`;
 }
 
-export default function AddPerson({ onClose }: Props) {
+export default function AddPerson({ name = '', onClose, onImport }: Props) {
   const target = useMemo(peopleVault, []);
-  const [f, setF] = useState<Record<string, string>>({ name: '', relation: 'friend', relationship: '', circle: '2', birthday: '', location: '', company: '', role: '', phone: '', email: '', how_met: '', summary: '', about: '', first: '', firstKind: 'call' });
+  const [f, setF] = useState<Record<string, string>>({ name, relation: 'friend', relationship: '', circle: '2', birthday: '', location: '', company: '', role: '', phone: '', email: '', how_met: '', summary: '', about: '', first: '', firstKind: 'call' });
   const [circleTouched, setCircleTouched] = useState(false);
   const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -81,7 +80,7 @@ export default function AddPerson({ onClose }: Props) {
 
   const create = async () => {
     if (!f.name.trim() || !file || busy) return;
-    if (f.birthday.trim() && !DATE_RE.test(f.birthday.trim())) { setErr('Birthday: YYYY-MM-DD, or MM-DD without the year'); return; }
+    if (f.birthday.trim() && !validDate(f.birthday)) { setErr('Birthday: a real date, YYYY-MM-DD or MM-DD without the year'); return; }
     setBusy(true); setErr('');
     const now = new Date(), today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     // the server reloads the page when it sees the new file; App opens the note (in view mode) after the reload
@@ -99,7 +98,7 @@ export default function AddPerson({ onClose }: Props) {
   return (
     <div className="modal-back" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
       <form className="newnote rename ap" role="dialog" aria-label="Add person" onSubmit={e => { e.preventDefault(); create(); }} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}>
-        <div className="ed-title">Add a person<small>{target} / people</small></div>
+        <div className="ed-title">Add a person<small>{target} / people</small>{onImport && <button type="button" className="link ap-import" onClick={onImport}>Import from contacts (.vcf)</button>}</div>
         <label className="rn-label">Name
           <input className="rn-input" autoFocus value={f.name} onChange={e => set('name', e.target.value)} placeholder="First name, or full name" /></label>
         {dup && <div className="rn-note">There is already a {dup.title} in your people. This adds another one.</div>}

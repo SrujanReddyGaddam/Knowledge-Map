@@ -56,14 +56,8 @@ export function logLines(body: string) {
 
 // next birthday from YYYY-MM-DD or MM-DD; days until it (0 = today) and the age turned when the year is known
 export function nextBirthday(s: string, now = Date.now()) {
-  const m = s.trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})$/);
-  if (!m) return null;
-  const t0 = dayStart(now), y = new Date(now).getFullYear(), mo = +m[2] - 1, d = +m[3];
-  if (mo < 0 || mo > 11 || d < 1 || d > 31) return null;
-  let at = new Date(y, mo, d).getTime();
-  if (at < t0) at = new Date(y + 1, mo, d).getTime();
-  const year = new Date(at).getFullYear();
-  return { days: Math.round((at - t0) / DAY), turns: m[1] ? year - +m[1] : null };
+  const r = nextYearly(s, now);
+  return r && { days: r.days, turns: r.count };
 }
 
 export function isPerson(n: Note) { return n.type === 'person' && relationOf(n.meta.relation) !== null; }
@@ -96,7 +90,36 @@ export function circlesData(notes: Note[], now = Date.now()) {
   const rank = (p: Person) => (p.status === 'overdue' ? 3 : p.status === 'never' ? 2 : p.status === 'due' ? 1 : 0);
   const reach = people.filter(p => p.status !== 'fresh').sort((a, b) => rank(b) - rank(a) || b.urgency - a.urgency || a.circle - b.circle || a.name.localeCompare(b.name));
   const birthdays = people.filter(p => p.bdayIn !== null && p.bdayIn <= 60).sort((a, b) => a.bdayIn! - b.bdayIn!);
-  return { people, reach, birthdays, noBirthday: people.filter(p => p.bdayIn === null).length };
+  return { people, reach, birthdays, noBirthday: people.filter(p => p.bdayIn === null).length, ties: tiesOf(people) };
+}
+
+// ties between people: family when one's partner:/kids: names the other ([[link]], full name, or a first name only one person has),
+// link when one note links the other. Pairs are listed once; family wins over link.
+export type Tie = { a: string; b: string; kind: 'family' | 'link' };
+export function tiesOf(people: Person[]): Tie[] {
+  const byId = new Map(people.map(p => [p.note.id, p]));
+  const low = (x: string) => x.trim().toLowerCase();
+  const byName = new Map<string, Person[]>();
+  const put = (k: string, p: Person) => { if (!k) return; const l = byName.get(k) || []; if (!l.includes(p)) l.push(p); byName.set(k, l); };
+  for (const p of people) { put(low(p.name), p); put(low(p.note.path.split('/').pop()!.replace(/\.md$/, '')), p); put(low(p.note.id), p); }
+  const first = new Map<string, Person[]>();
+  for (const p of people) { const f = low(p.name).split(/\s+/)[0]; if (f) first.set(f, [...(first.get(f) || []), p]); }
+  const find = (raw: string) => {
+    const w = raw.match(/\[\[([^\]|#]+)/), k = low(w ? w[1] : raw.replace(/\(.*?\)/g, ''));
+    const hit = byName.get(k); if (hit?.length === 1) return hit[0];
+    const f = !w && !/\s/.test(k) ? first.get(k) : undefined;
+    return f?.length === 1 ? f[0] : undefined;
+  };
+  const out = new Map<string, Tie>();
+  const tie = (a: string, b: string, kind: Tie['kind']) => {
+    if (a === b) return; const k = [a, b].sort().join('\u0000'), o = out.get(k);
+    if (!o || (o.kind === 'link' && kind === 'family')) out.set(k, { a, b, kind });
+  };
+  for (const p of people) {
+    for (const key of ['partner', 'kids']) for (const part of (p.note.meta[key] || '').split(/,(?![^[]*\]\])/)) { const t = part.trim() && find(part); if (t) tie(p.note.id, t.note.id, 'family'); }
+    for (const id of p.note.links) if (byId.has(id)) tie(p.note.id, id, 'link');
+  }
+  return [...out.values()];
 }
 
 export const agoText = (d: number | null) => (d === null ? 'no contact logged' : d === 0 ? 'today' : d === 1 ? 'yesterday' : d < 60 ? d + ' days ago' : Math.round(d / 30) + ' months ago');

@@ -6,6 +6,8 @@ const fetchToken = () => (tokenP = fetch('/api/session', { headers: { 'X-KM': '1
   .catch(e => { tokenP = null; throw e; }));
 
 export type Reply = { status: number; json: any };
+// while n > 0 our own writes do not reload the page (a bulk import reloads once at the end)
+export const reloadHold = { n: 0 };
 async function call(path: string, body?: object): Promise<Reply> {
   for (let attempt = 0; ; attempt++) {
     const token = await (tokenP ?? fetchToken());

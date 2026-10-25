@@ -3,11 +3,13 @@ import { listTemplates, createNote } from './api';
 import type { Note } from 'virtual:vault';
 
 type Tpl = { name: string; text: string };
-type Props = { vaults: string[]; current: Note | null; onClose: () => void };
+type Props = { vaults: string[]; current: Note | null; onClose: () => void; onPerson?: (title: string) => void };
 
 // Template hints live in the template's frontmatter and are removed from the new note:
 //   km_folder: knowledge/uipath   (default folder)     km_dated: true   (file name starts with the date)
 // Placeholders: {{title}} {{date}}
+// "Person" (when people can be added) hands the title over to the Add person form, which writes a full profile
+const PERSON = 'Person (profile form)';
 const BLANK: Tpl = { name: 'Blank', text: '---\ntitle: {{title}}\ntype: \nsummary: \nsensitivity: \ntags: []\n---\n\n' };
 const hint = (t: string, k: string) => t.match(new RegExp(`^km_${k}:\\s*(.*)$`, 'm'))?.[1].trim().replace(/^["']|["']$/g, '') ?? '';
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -21,7 +23,7 @@ export const fill = (t: string, title: string) => {
   return end > 0 ? sub(t.slice(0, end).replace(/^km_\w+:.*\n?/gm, '').replace(/\n+$/, ''), yamlStr(one)) + sub(t.slice(end), one) : sub(t, one);
 };
 
-export default function NewNote({ vaults, current, onClose }: Props) {
+export default function NewNote({ vaults, current, onClose, onPerson }: Props) {
   const [vault, setVault] = useState(current && vaults.includes(current.vault) ? current.vault : vaults[0]);
   const [tpls, setTpls] = useState<Tpl[]>([BLANK]);
   const [tpl, setTpl] = useState('Blank');
@@ -68,7 +70,7 @@ export default function NewNote({ vaults, current, onClose }: Props) {
         {vaults.length > 1 && <label className="rn-label">Vault
           <select className="rn-input" value={vault} onChange={e => { setVault(e.target.value); setTpl('Blank'); }}>{vaults.map(v => <option key={v}>{v}</option>)}</select></label>}
         <label className="rn-label">Template
-          <select className="rn-input" value={tpl} onChange={e => setTpl(e.target.value)}>{tpls.map(x => <option key={x.name}>{x.name}</option>)}</select></label>
+          <select className="rn-input" value={tpl} onChange={e => { if (e.target.value === PERSON && onPerson) onPerson(title.trim()); else setTpl(e.target.value); }}>{tpls.map(x => <option key={x.name}>{x.name}</option>)}{onPerson && <option>{PERSON}</option>}</select></label>
         <label className="rn-label">Title
           <input className="rn-input" autoFocus value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') create(); }} placeholder="What is this note about?" /></label>
         <label className="rn-label">Folder

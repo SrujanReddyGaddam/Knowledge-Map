@@ -60,14 +60,20 @@ export function age(birthday: string, now = Date.now()) {
   if (d.getMonth() + 1 < +m[2] || (d.getMonth() + 1 === +m[2] && d.getDate() < +m[3])) a--;
   return a >= 0 && a < 130 ? a : null;
 }
-// days until the next yearly date (YYYY-MM-DD or MM-DD), and the count it completes when the year is known
+// a date that exists on the calendar (04-31 does not); without a year, Feb 29 is allowed
+export function validDate(s: string) {
+  const m = (s || '').trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})$/); if (!m) return false;
+  const d = new Date(m[1] ? +m[1] : 2000, +m[2] - 1, +m[3]);
+  return d.getMonth() === +m[2] - 1 && d.getDate() === +m[3];
+}
+// days until the next yearly date (YYYY-MM-DD or MM-DD), and the count it completes when the year is known; Feb 29 falls on Feb 28 in other years
 export function nextYearly(s: string, now = Date.now()) {
   const m = (s || '').trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})$/);
-  if (!m) return null;
+  if (!m || !validDate(s)) return null;
   const t0 = dayStart(now), y = new Date(now).getFullYear(), mo = +m[2] - 1, d = +m[3];
-  if (mo < 0 || mo > 11 || d < 1 || d > 31) return null;
-  let at = new Date(y, mo, d).getTime();
-  if (at < t0) at = new Date(y + 1, mo, d).getTime();
+  const on = (yr: number) => new Date(yr, mo, mo === 1 && d === 29 && new Date(yr, 1, 29).getMonth() !== 1 ? 28 : d).getTime();
+  let at = on(y);
+  if (at < t0) at = on(y + 1);
   return { days: Math.round((at - t0) / DAY), count: m[1] ? new Date(at).getFullYear() - +m[1] : null };
 }
 
@@ -96,4 +102,48 @@ export function fmtDate(s: string) {
   const m = (s || '').trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})$/);
   if (!m || +m[2] < 1 || +m[2] > 12) return s;
   return `${MONTHS[+m[2] - 1]} ${+m[3]}${m[1] ? ', ' + m[1] : ''}`;
+}
+
+// contacts from a .vcf file (vCard 2.1, 3.0, 4.0: Apple and Google exports): the fields Add person knows. Unknown or broken lines are skipped.
+export type Contact = { name: string; phone: string; email: string; birthday: string; location: string; address: string; company: string; role: string; about: string };
+export function parseVcards(text: string): Contact[] {
+  const lines: string[] = [];   // unfold continued lines, and quoted-printable soft breaks (a QP line ending in =)
+  for (const l of text.replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n')) {
+    const prev = lines[lines.length - 1];
+    if (prev !== undefined && /ENCODING=QUOTED-PRINTABLE/i.test(prev.split(':')[0]) && prev.endsWith('=')) lines[lines.length - 1] = prev.slice(0, -1) + l; else lines.push(l);
+  }
+  const unesc = (v: string) => v.replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1').replace(/\s+/g, ' ').trim();
+  const qp = (v: string) => { try { return decodeURIComponent(v.replace(/%/g, '%25').replace(/=([0-9A-F]{2})/gi, '%$1')); } catch { return v; } };
+  const parts = (v: string) => v.split(/(?<!\\);/).map(unesc);
+  const out: Contact[] = [];
+  let c: (Contact & { n: string; tels: [string, boolean][] }) | null = null;
+  for (const l of lines) {
+    if (/^BEGIN:VCARD/i.test(l)) { c = { name: '', n: '', phone: '', email: '', birthday: '', location: '', address: '', company: '', role: '', about: '', tels: [] }; continue; }
+    if (!c) continue;
+    if (/^END:VCARD/i.test(l)) {
+      const name = c.name || c.n;
+      if (name) out.push({ name, phone: (c.tels.find(t => t[1]) || c.tels[0])?.[0] || '', email: c.email, birthday: c.birthday, location: c.location, address: c.address, company: c.company, role: c.role, about: c.about });
+      c = null; continue;
+    }
+    const m = l.match(/^(?:[\w-]+\.)?([A-Za-z-]+)((?:;[^:]*)?):(.*)$/); if (!m) continue;
+    const key = m[1].toUpperCase(), params = m[2].toUpperCase();
+    const val = /ENCODING=QUOTED-PRINTABLE/.test(params) ? qp(m[3]) : m[3];
+    if (key === 'FN') c.name = unesc(val);
+    else if (key === 'N' && !c.n) { const p = parts(val); c.n = [p[3], p[1], p[2], p[0], p[4]].filter(Boolean).join(' '); }
+    else if (key === 'TEL' && unesc(val)) c.tels.push([unesc(val).replace(/^tel:/i, ''), /CELL|MOBILE|IPHONE/.test(params)]);
+    else if (key === 'EMAIL' && !c.email) c.email = unesc(val).replace(/^mailto:/i, '');
+    else if (key === 'ORG' && !c.company) c.company = parts(val)[0] || '';
+    else if (key === 'TITLE' && !c.role) c.role = unesc(val);
+    else if (key === 'NOTE' && !c.about) c.about = unesc(val).slice(0, 600);
+    else if (key === 'ADR' && !c.address) {
+      const p = parts(val);   // po box; extended; street; city; region; postal code; country
+      c.location = [p[3], p[4] || p[6]].filter(Boolean).join(', ');
+      c.address = [p[2], p[3], [p[4], p[5]].filter(Boolean).join(' '), p[6]].filter(Boolean).join(', ');
+    } else if (key === 'BDAY' && !c.birthday) {
+      // 1990-06-04, 19900604, --0604, --06-04; Apple writes 1604 (with X-APPLE-OMIT-YEAR) when the year is unknown
+      const b = unesc(val).match(/^(?:(\d{4})|--)-?(\d{2})-?(\d{2})/);
+      if (b) { const noYear = !b[1] || b[1] === '1604' || /OMIT-YEAR/.test(params); const s = (noYear ? '' : b[1] + '-') + b[2] + '-' + b[3]; if (validDate(s)) c.birthday = s; }
+    }
+  }
+  return out;
 }

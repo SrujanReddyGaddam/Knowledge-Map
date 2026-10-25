@@ -15,6 +15,10 @@ const ago = (ms: number) => {
   if (m < 1) return 'just now'; if (m < 60) return Math.round(m) + 'm ago'; if (m < 1440) return Math.round(m / 60) + 'h ago';
   const d = Math.round(m / 1440); if (d < 30) return d + 'd ago'; if (d < 365) return Math.round(d / 30) + 'mo ago'; return Math.round(d / 365) + 'y ago';
 };
+const BR_MIN = 300, BR_DEF = 360;
+const brMax = () => Math.max(BR_MIN, innerWidth - 80);
+const brWide = () => Math.min(760, Math.round(innerWidth * 0.55));
+
 const group = (ms: number) => {
   const startToday = new Date().setHours(0, 0, 0, 0), day = 86400000;
   if (ms >= startToday) return 'Today'; if (ms >= startToday - day) return 'Yesterday'; if (ms >= startToday - 6 * day) return 'This week';
@@ -42,6 +46,13 @@ export default function Browse({ top, notes, byId, brokenLinks, lint, changed, o
   const [tab, setTab] = useState<Tab>(() => { try { const t = localStorage.getItem('browseTab'); return t === 'new' || t === 'tree' || t === 'health' ? t : 'recent'; } catch { return 'recent'; } });
   useEffect(() => { try { localStorage.setItem('browseTab', tab); } catch {} }, [tab]);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  // drawer width: drag the right edge, double-click it or use the expand button to toggle wide
+  const [width, setWidth] = useState(() => { try { return Number(localStorage.getItem('browseW')) || BR_DEF; } catch { return BR_DEF; } });
+  const [resizing, setResizing] = useState(false);
+  useEffect(() => { try { localStorage.setItem('browseW', String(width)); } catch {} }, [width]);
+  const w = Math.min(brMax(), Math.max(BR_MIN, width));
+  const wide = w > BR_DEF + 40;
+  const toggleWide = () => setWidth(wide ? BR_DEF : brWide());
   const tree = useMemo(() => buildTree(notes), [notes]);
   // keep the open note's folders expanded
   useEffect(() => {
@@ -85,7 +96,9 @@ export default function Browse({ top, notes, byId, brokenLinks, lint, changed, o
 
   let lastGroup = '';
   return (
-    <div className="browse" style={{ top }} role="dialog" aria-label="Browse notes">
+    <div className={'browse' + (resizing ? ' resizing' : '')} style={{ top, ['--brw' as string]: w + 'px' }} role="dialog" aria-label="Browse notes">
+      <div className="br-resize" title="Drag to resize, double-click to toggle wide" onPointerDown={e => { e.preventDefault(); (e.target as HTMLElement).setPointerCapture(e.pointerId); setResizing(true); }}
+        onPointerMove={e => { if (resizing) setWidth(Math.min(brMax(), Math.max(BR_MIN, Math.round(e.clientX - 20)))); }} onPointerUp={() => setResizing(false)} onPointerCancel={() => setResizing(false)} onDoubleClick={toggleWide} />
       <div className="br-head">
         <div className="seg" role="tablist">
           <button className={tab === 'new' ? 'on' : ''} onClick={() => setTab('new')}>New{changed.size ? ` ${changed.size}` : ''}</button>
@@ -93,7 +106,12 @@ export default function Browse({ top, notes, byId, brokenLinks, lint, changed, o
           <button className={tab === 'tree' ? 'on' : ''} onClick={() => setTab('tree')}>Tree</button>
           <button className={tab === 'health' ? 'on' : ''} onClick={() => setTab('health')}>Health{healthCount > 0 ? ` ${healthCount}` : ''}</button>
         </div>
-        <button className="icon-btn sm" onClick={onClose} aria-label="Close browse">&times;</button>
+        <span className="br-acts">
+          <button className="icon-btn sm" onClick={toggleWide} aria-label={wide ? 'Narrow browse' : 'Widen browse'} title={wide ? 'Narrow' : 'Widen (or drag the right edge)'}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{wide ? <path d="M6 4 2 8l4 4M10 4l4 4-4 4" /> : <path d="M5 4 1.5 8 5 12M11 4l3.5 4-3.5 4M1.5 8h13" />}</svg>
+          </button>
+          <button className="icon-btn sm" onClick={onClose} aria-label="Close browse">&times;</button>
+        </span>
       </div>
       <div className="br-body">
         {tab === 'new' && <>
