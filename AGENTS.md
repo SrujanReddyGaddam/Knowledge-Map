@@ -17,7 +17,7 @@ Ask the user these questions (use sensible defaults if they say "you decide", an
 2. **Names:** display name per vault (default: folder name).
 3. **Exclude:** files to leave out, relative to the vault root. Always ask about secrets (tokens, `.env`-like notes, credentials) and meta files like `README.md`. Entries are an exact path (`"README.md"`), a folder ending in `/` (`"private/"`), or a glob (`"**/_templates/**"`, `"drafts/*.md"`). Dot-folders are always skipped.
 4. **rootSection:** label for notes sitting in the vault root (default `General`). Top-level folders become "sections" in the map.
-5. **How to run:** (a) on demand with `npm run dev`, or (b) always-on at login. Always-on is macOS only (launchd), see below. On Linux/Windows suggest a systemd unit / Task Scheduler running `node node_modules/vite/bin/vite.js --port 7777` from the repo root, or just on demand.
+5. **How to run:** (a) on demand with `npm run dev`, or (b) always-on at login. Always-on: macOS uses launchd, Windows a Startup-folder shortcut (both below). On Linux suggest a systemd user unit running `node node_modules/vite/bin/vite.js --port 7777` from the repo root, or just on demand.
 6. **Look and feel (optional):** palette (`paper`, `sage` default, `clay`, `ocean`, `dusk`; users can also switch in the UI), sound off by default.
 
 Then:
@@ -29,6 +29,8 @@ npm run dev                              # http://localhost:7777  (also http://k
 ```
 Always-on on macOS: `scripts/install-launchd.sh` (add `--label com.<name>.knowledge-map` to choose the service name, `--print` to preview, `--uninstall` to remove). It uses the `node` on the current PATH, so run it from a shell where `node -v` shows the version the user wants. Restart after editing `config.json` or the server-side files (see Updating below):
 `launchctl kickstart -k gui/$(id -u)/<label>`. Logs: `~/Library/Logs/knowledge-map.log`.
+
+Always-on on Windows: `powershell -ExecutionPolicy Bypass -File scripts\install-windows-startup.ps1` (no admin needed: a shortcut in the user's Startup folder starts the app in a hidden window; `-Restart`, `-Stop`, `-Uninstall`, `-Print`, `-Port 7778`). It uses the `node` on PATH. Logs: `%LOCALAPPDATA%\knowledge-map\knowledge-map.log` and `.err.log`. Windows notes: write paths in `config.json` with forward slashes (`"D:/Users/me/Developer/knowledge"`) or doubled backslashes, and prefer absolute paths, because `~` is the user profile folder, which on managed machines may be on another drive than the user's working folders. Note `path` values are always `/`-separated on every OS (the loader normalizes them). Delete moves a note to the Recycle Bin (fallback: `<vault>/.km-trash/`). `html.knowledge.localhost` works in Edge and Chrome.
 
 Verify before telling the user it works: server returns 200, the startup log line `[vault] <names>: N notes, M links, K unresolved` shows the expected counts (0 notes means a wrong path or a macOS permission problem), and open the page (screenshot if you can drive a browser).
 
@@ -42,7 +44,7 @@ Work out what the update needs from what actually changed, run only that, and re
 | Changed | Do |
 |---|---|
 | `package.json` or `package-lock.json` | `npm install`. Check `node -v` against the prerequisites above first; if Node is too old, stop and tell the user. |
-| `vite.config.ts`, `vault-plugin.ts`, `vault-load.ts`, `frontmatter.ts`, `rename-links.ts`, `append-text.ts`, `projects.ts` (the server side) | Restart the server: `launchctl kickstart -k gui/$(id -u)/<label>` for always-on (find the label with `launchctl list \| grep knowledge-map`), else stop and start `npm run dev`. Restarting when unsure is safe. |
+| `vite.config.ts`, `vault-plugin.ts`, `vault-load.ts`, `frontmatter.ts`, `rename-links.ts`, `append-text.ts`, `projects.ts` (the server side) | Restart the server: `launchctl kickstart -k gui/$(id -u)/<label>` for always-on on macOS (find the label with `launchctl list \| grep knowledge-map`), `powershell -ExecutionPolicy Bypass -File scripts\install-windows-startup.ps1 -Restart` on Windows, else stop and start `npm run dev`. Restarting when unsure is safe. |
 | only `src/` files | Nothing to run; the dev server hot-reloads. The user reloads the page once (Cmd+R, or the reload button in the top right). |
 | `mcp-server.ts`, any root `.ts` file, or `src/*.ts` | If the user registered the MCP server (`claude mcp list` shows `knowledge-map`), it runs the old code until Claude Code restarts or the user reconnects it with `/mcp`. Tell them. |
 | `config.example.json` | Compare it with their `config.json` and tell the user about new options. Never edit `config.json` without asking; back it up first if they say yes. |
@@ -110,7 +112,7 @@ Frontmatter fields the app understands beyond title/tags/summary/status/source: 
 | `src/seen.ts` | Per-browser record of which note versions were seen (localStorage) to flag updated notes. |
 | `src/search.ts` | Search index and ranking (punctuation-loose: `release-22` = `release 22` = `release22`; a pasted `[[link|alias]]` searches its target; one typo allowed in words of 5+ letters against name words; an exact file name or title ranks first; hits hidden by filters, workspace or focus are listed under "n more outside your filters" in `App.tsx`); operators `tag:` `vault:` `path:` `"phrase"` `-exclude`, and `key:value` / `-key:value` for any frontmatter key that exists in some note. |
 | `src/palettes.ts`, `src/sound.ts` | Color palettes (tinted neutrals + one accent) and synthesized click sounds. |
-| `scripts/install-launchd.sh` | macOS always-on installer. |
+| `scripts/install-launchd.sh`, `scripts/install-windows-startup.ps1` | Always-on installers: macOS (launchd) and Windows (Startup-folder shortcut, no admin). |
 
 Data contract (`src/vault.d.ts`): a note has `id, vault, path, abs, section, title, tags, status, source, fetched, summary, body, links, backlinks, mtime, writable, type, customer, project, component, sensitivity, meta` (`meta` = every frontmatter key as a short string), optional `kind: 'drawing'` (with `scene`) or `kind: 'html'`. Note ids are the bare filename when unique, else `<vault>/<path>`. Wikilinks resolve within the same vault first, then across vaults.
 

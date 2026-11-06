@@ -34,6 +34,9 @@ export default function vault(): Plugin {
   const report = () => console.log(`[vault] ${current.data.vaults.join(', ')}: ${current.data.notes.length} notes, ${current.data.edges.length} links, ${current.data.broken.length} unresolved`);
   report();
   const roots = current.vaults.map(v => v.path);
+  // watcher paths vs vault roots: compare resolved paths, case-insensitive on Windows (D:\\x vs d:/x), and only whole folder names
+  const normP = (p: string) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const rootsN = roots.map(normP);
   return {
     name: 'vault',
     resolveId(id) { if (id === ID) return RID; },
@@ -49,7 +52,8 @@ export default function vault(): Plugin {
       let timer: ReturnType<typeof setTimeout> | null = null, external = false;
       const selfWrites = new Map<string, number>();   // real path -> when this server saved it (so our own saves do not reload the page mid-edit)
       const onChange = (f: string) => {
-        if (!roots.some(r => f.startsWith(r)) || /[\\/]\./.test(f.slice(roots.find(r => f.startsWith(r))!.length)) || !/\.(md|excalidraw|html?|png|jpe?g|gif|svg|webp)$/i.test(f)) return;
+        const fn = normP(f), root = rootsN.find(r => fn.startsWith(r + path.sep));
+        if (!root || /[\\/]\./.test(fn.slice(root.length)) || !/\.(md|excalidraw|html?|png|jpe?g|gif|svg|webp)$/i.test(fn)) return;
         let own = false; try { const t = selfWrites.get(fs.realpathSync(f)); own = !!t && Date.now() - t < 5000; } catch {}
         if (!own) external = true;
         // batch bursts of saves (Obsidian autosave, iCloud sync) into one update
@@ -518,11 +522,23 @@ export default function vault(): Plugin {
           const root = current.vaults.find(v => v.name === n.vault)?.path;
           const abs = path.resolve(n.abs);
           if (!root || !abs.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(abs)) return send(res, 400, { error: 'file not inside a vault' });
-          const trash = path.join(os.homedir(), '.Trash');
-          const ext = path.extname(abs);
-          let dest = path.join(trash, path.basename(abs));
-          if (fs.existsSync(dest)) dest = path.join(trash, `${path.basename(abs, ext)} ${Date.now()}${ext}`);
-          try { fs.renameSync(abs, dest); } catch { fs.copyFileSync(abs, dest); fs.unlinkSync(abs); }
+          // macOS: ~/.Trash. Windows: the Recycle Bin (path passed in an env var, never in the command). Elsewhere, or if that fails:
+          // a .km-trash folder in the vault (a dot-folder, so the map ignores it). Never a plain delete.
+          let dest = '';
+          if (process.platform === 'win32') {
+            const ok = await new Promise<boolean>(done => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+              "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:KM_DEL, 'OnlyErrorDialogs', 'SendToRecycleBin')"],
+              { env: { ...process.env, KM_DEL: abs }, timeout: 20_000, windowsHide: true }, err => done(!err && !fs.existsSync(abs))));
+            if (ok) dest = 'Recycle Bin';
+          }
+          if (!dest) {
+            const trash = process.platform === 'darwin' ? path.join(os.homedir(), '.Trash') : path.join(path.resolve(root), '.km-trash');
+            fs.mkdirSync(trash, { recursive: true });
+            const ext = path.extname(abs);
+            dest = path.join(trash, path.basename(abs));
+            if (fs.existsSync(dest)) dest = path.join(trash, `${path.basename(abs, ext)} ${Date.now()}${ext}`);
+            try { fs.renameSync(abs, dest); } catch { fs.copyFileSync(abs, dest); fs.unlinkSync(abs); }
+          }
           console.log(`[vault] trashed ${abs} -> ${dest}`);
           send(res, 200, { ok: true, trashedTo: dest });
         } catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }

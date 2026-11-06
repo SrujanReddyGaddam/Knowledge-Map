@@ -29,7 +29,7 @@ Keep the interview short. Ask at most 3 or 4 questions per message, offer a defa
 8. For a new vault: "Which customers do you work with?" (slugs for `projects/<customer>/`, optional) and "Keep the fictional `acme` example notes for a tour?" (default yes).
 
 **Round 3: how to run.**
-9. On demand (`npm run dev`) or always on at login? Always-on is macOS only here (launchd). On Linux suggest a systemd user unit, on Windows a Task Scheduler entry, both running `node node_modules/vite/bin/vite.js --port 7777` in this folder.
+9. On demand (`npm run dev`) or always on at login? Always-on: macOS (launchd) and Windows (Startup-folder shortcut, no admin rights). On Linux suggest a systemd user unit running `node node_modules/vite/bin/vite.js --port 7777` in this folder.
 10. Palette (paper, sage, clay, ocean, dusk). Default sage; they can switch in the app.
 
 ## 3. Secrets scan (before the app ever reads a vault)
@@ -42,7 +42,7 @@ For every existing vault, scan the markdown for likely secrets (same patterns as
 4. Existing vault without the schema: add it to `config.json` yourself, using `config.example.json` as the shape, with the `exclude` list from step 3 and `writable` from the interview. No `lint`.
 5. If `config.json` did not exist, `new-vault.mjs --config` creates it. Check that every vault from the interview is in it and that nothing from any example is.
    If they want resume cards, add `"projects": { "roots": ["<code projects folder>"] }`. A vault inside that folder gets no card automatically (it is knowledge, not a code project), so no `exclude` entry is needed for it.
-6. Run mode: on demand, start `npm run dev` in the background. Always on (macOS): `scripts/install-launchd.sh --label com.<their-short-name>.knowledge-map [--port <port>]` from a shell where `node -v` is the version you checked (`--port` also sets `KM_PORT` for the service).
+6. Run mode: on demand, start `npm run dev` in the background. Always on (macOS): `scripts/install-launchd.sh --label com.<their-short-name>.knowledge-map [--port <port>]` from a shell where `node -v` is the version you checked (`--port` also sets `KM_PORT` for the service). Always on (Windows): `powershell -ExecutionPolicy Bypass -File scripts\install-windows-startup.ps1 [-Port <port>]` from a terminal where `node -v` is the version you checked. On Windows write every path in `config.json` with forward slashes and absolute (the home folder `~` may be on another drive than their work), and use PowerShell equivalents for the checks above (`Get-ChildItem -Recurse -Filter *.md`, `Get-NetTCPConnection -LocalPort 7777`, `Invoke-WebRequest`).
 
 ## 5. Verify (do not skip)
 - `curl -s -o /dev/null -w "%{http_code}" http://localhost:<port>/` returns 200.

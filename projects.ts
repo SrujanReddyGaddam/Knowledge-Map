@@ -15,7 +15,7 @@ export type Project = {
 
 const TRACK = ['PLAN.md', 'TODO.md', 'WORKLOG.md'];
 const FENCE = /^\s*(```|~~~)/;
-const home = (p: string) => (p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p);
+const home = (p: string) => (/^~(?=$|[\\/])/.test(p) ? path.join(os.homedir(), p.slice(1)) : p);
 const read = (f: string, max = 200_000) => { try { const st = fs.statSync(f); if (!st.isFile() || st.size > max) return ''; return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
 const clean = (s: string) => s.replace(/\*\*|__|`/g, '').replace(/^_+|_+$/g, '').replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => b || a).replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').trim();
 
@@ -55,7 +55,7 @@ function parseLog(t: string) {
   return { last: { date, title, next: nl ? clean(nl.replace(/^\s*[-*]?\s*\**Next:?\**:?\s*/i, '')).slice(0, 400) : '' }, text: entry.join('\n').slice(0, 12_000) };
 }
 
-const real = (p: string) => { try { return fs.realpathSync(home(p)); } catch { return path.resolve(home(p)); } };
+const real = (p: string) => { let r: string; try { r = fs.realpathSync(home(p)); } catch { r = path.resolve(home(p)); } return process.platform === 'win32' ? r.toLowerCase() : r; };
 
 // vaultPaths: configured vaults. A vault inside a root (e.g. ~/Developer/knowledge) is knowledge, not a code project, so it gets no card.
 export function scanProjects(cfg: ProjectsCfg | undefined, vaultPaths: string[] = []): Project[] {

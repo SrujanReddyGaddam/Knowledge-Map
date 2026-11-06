@@ -19,6 +19,8 @@ Needs Node `^20.19.0 || >=22.12.0`.
 
 `config.json` accepts several vaults and a per-vault `exclude` list (put secrets there). It is git-ignored. Restart the server after changing it.
 
+On Windows (PowerShell): `copy config.example.json config.json`, and write paths with forward slashes, e.g. `"path": "D:/Users/me/Developer/knowledge"`. Prefer absolute paths: `~` means your user profile folder, which on managed machines may sit on another drive than your work.
+
 ## Easiest: let a coding agent set it up (recommended)
     git clone https://github.com/SrujanReddyGaddam/Knowledge-Map.git
     cd Knowledge-Map
@@ -63,6 +65,13 @@ Customer details stay in `projects/<customer>/`; the generic part goes to `knowl
     scripts/install-launchd.sh --uninstall
 
 Then open http://knowledge.localhost:7777. Logs: `~/Library/Logs/knowledge-map.log`. Restart after editing `config.json` or `vault-plugin.ts`: `launchctl kickstart -k gui/$(id -u)/com.knowledge-map`. If a vault shows 0 notes, give the `node` binary Full Disk Access (System Settings > Privacy & Security), then restart. If you upgrade Node with nvm, rerun the install script.
+
+## Always-on (Windows)
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows-startup.ps1             # start at login and now
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows-startup.ps1 -Restart    # after editing config.json
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows-startup.ps1 -Uninstall
+
+No admin rights needed: it adds a shortcut to your Startup folder that starts the app in a hidden window. Logs: `%LOCALAPPDATA%\knowledge-map\knowledge-map.log`. Open http://knowledge.localhost:7777 in Edge or Chrome. Delete moves notes to the Recycle Bin.
 
 ## Updating
 Tell your coding agent **"There are updates to the repo, update the app."** It follows the "Updating an existing install" section of `AGENTS.md`: pulls, looks at what changed, and runs only what that needs (`npm install`, a server restart, an MCP reconnect), then checks that your note counts are unchanged. Your vaults and `config.json` are never touched; new vault skills are offered, not copied. By hand: `git pull`, then `npm install` if `package.json` changed, restart the server, and reload the page.

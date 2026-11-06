@@ -2,6 +2,7 @@
 // Shared by the Vite plugin (vault-plugin.ts) and the MCP server (mcp-server.ts). Read-only: nothing here writes.
 // Imports carry the .ts extension so Node can run this file directly (type stripping), outside Vite.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import LZString from 'lz-string';
 import { outsideCode, withoutCode } from './rename-links.ts';
@@ -47,7 +48,9 @@ function summaryOf(body: string) {
 
 export function vaultList(cfg: Config) {
   const list: VaultCfg[] = cfg.vaults?.length ? cfg.vaults : [{ path: cfg.vault!, exclude: cfg.exclude, rootSection: cfg.rootSection }];
-  return list.map(v => ({ name: v.name || path.basename(v.path), path: v.path, exclude: v.exclude || [], rootSection: v.rootSection || 'General', writable: v.writable === true,
+  // "~/x" (or "~\\x" on Windows) is the home folder; forward slashes work on every OS ("D:/Users/me/Developer/knowledge")
+  const home = (p: string) => (/^~(?=$|[\\/])/.test(p) ? path.join(os.homedir(), p.slice(1)) : p);
+  return list.map(v => ({ name: v.name || path.basename(home(v.path)), path: path.resolve(home(v.path)), exclude: v.exclude || [], rootSection: v.rootSection || 'General', writable: v.writable === true,
     sectionDepth: v.sectionDepth || {}, lint: v.lint === true, sensitivity: (v.sensitivity || '').toLowerCase() }));
 }
 
@@ -195,8 +198,9 @@ export function loadVaults(cfg: Config) {
       }));
       const depth = Math.max(1, Math.min(4, v.sectionDepth[parts[0]] || 1));
       const folder = parts.length > 1 ? parts.slice(0, Math.min(depth, parts.length - 1)).join('/') : v.rootSection;
+      // path is always "/"-separated (Windows too): the page and the rename/create checks compare with "/" paths
       raws.push({
-        vi, vault: v.name, base, fkey: fullKey(path.basename(f)), path: rel, abs: path.resolve(v.path, rel), folder, id: base, section: multi ? `${v.name} / ${folder}` : folder,
+        vi, vault: v.name, base, fkey: fullKey(path.basename(f)), path: rel.split(path.sep).join('/'), abs: path.resolve(v.path, rel), folder, id: base, section: multi ? `${v.name} / ${folder}` : folder,
         title: (fm.title as string) || h1 || base, tags, status,
         source: fm.source && fm.source !== 'none' ? String(fm.source) : '', fetched: String(fm.source_fetched || fm.updated || fm.date || ''),
         summary: scene ? `Excalidraw drawing, ${scene.elements.length} elements.${drawingText ? ' ' + drawingText.trim().split(/\n+/)[0].slice(0, 90) : ''}` : (typeof fm.summary === 'string' && fm.summary ? fm.summary.slice(0, 320) : summaryOf(body)),
