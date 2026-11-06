@@ -126,7 +126,7 @@ const TOOLS: { name: string; description: string; inputSchema: object; run: (a: 
       const { notes, cfg, jiraBase } = data(), cs = customersOf(notes), q = String(a.customer || '').toLowerCase().trim();
       const c = cs.find(x => x === q) ?? cs.find(x => x.startsWith(q) || x.includes(q));
       if (!c) return `Unknown customer "${a.customer}". Known: ${cs.join(', ') || 'none'}.`;
-      const code = SAFE ? [] : scanProjects(cfg.projects).filter(p => projectCustomer(p, cs, cfg.projects?.customers || {}) === c);
+      const code = SAFE ? [] : scanProjects(cfg.projects, (cfg.vaults || []).map(v => v.path)).filter(p => projectCustomer(p, cs, cfg.projects?.customers || {}) === c);
       const p = String(a.project || '').toLowerCase().trim(), ps = [...new Set(notes.filter(n => ofCustomer(n, c) && n.project).map(n => n.project))];
       const proj = p ? ps.find(x => x === p) ?? ps.find(x => x.includes(p)) : undefined;
       if (p && !proj) return `Unknown project "${a.project}" for ${c}. Known: ${ps.join(', ') || 'none'}.`;

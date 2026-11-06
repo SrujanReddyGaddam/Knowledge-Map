@@ -16,7 +16,9 @@
 8. Notes derived from an external doc (wiki page, ticket, chat thread, vendor docs) record `source` and `source_fetched`, so stale knowledge can be refreshed instead of silently wrong.
 9. Nothing is deleted. Superseded or finished material moves to `archive/`.
 10. Read the current state, not the history. Every customer, project and component hub opens with `## Current state`, the distilled truth as of `distilled_through`. Meetings, journals and captures are the log behind it. A note replaced by a newer one gets `status: superseded` and `superseded_by`; it is not edited to match.
-10. No secrets in notes, ever: no tokens, passwords, API keys, connection strings. Write where the secret lives instead ("in the team password manager under X").
+11. No secrets in notes, ever: no tokens, passwords, API keys, connection strings. Write where the secret lives instead ("in the team password manager under X").
+
+12. Code stays in its project folder, knowledge comes here. A code project (plan, worklog, `.xaml`, `.cs`) never goes in this vault and is never on the map. What you learn while coding becomes a note here: write it now if it is clear (generic part to `knowledge/`, customer part to `projects/<customer>/<project>/`), capture it to `inbox/` if it is loose, or leave a `Learned: ...` line in the project's `WORKLOG.md` for `harvest-project`. The project hub names its code folder on a `Code: <path>` line.
 
 ## Folders
 
@@ -124,6 +126,7 @@ Run `node {{APP_DIR}}/scripts/build-indexes.ts "{{VAULT_PATH}}"` after adding or
 - Allowed without asking: create notes in `inbox/` and `journal/`; edit notes (the vault is in git and the app keeps backups); fix frontmatter; add links; regenerate lists.
 - Ask first: moving, renaming, merging or archiving notes; anything in `sources/`; changing these rules.
 - Record what you changed in `WORKLOG.md` (newest first, dated). Do not paste note content into commits, issues or logs outside this vault.
+- Working in a code project and asked to "save this to knowledge": read this file, then write the note here (rule 12), link it to the project hub, run the list builder and add a `WORKLOG.md` line here. Never copy code files or the project's PLAN/TODO into the vault; link or summarize.
 - Prefer the Knowledge Map app's Rename (or `POST /api/rename`) for moves, because it rewrites links in other notes.
 - Skills for upkeep live in `.claude/skills/` (Claude Code picks them up when started in this folder; other agents can read the `SKILL.md` files directly): `organize-vault` (one-time cleanup and sanitizing of existing notes), `triage-inbox`, `lint-vault`, `distill`, `harvest-project`.
 

@@ -1,6 +1,6 @@
 # Knowledge Map
 
-A local, 3D interactive map of your Obsidian vaults. Notes are spheres, links are flowing lines, and a side panel renders the selected note. It reads your vaults straight from disk; nothing is uploaded and no vault content lives in this repo.
+A local, 3D interactive map of your notes: any folder of markdown files with `[[wikilinks]]` (an Obsidian vault works, but Obsidian is optional). Notes are spheres, links are flowing lines, and a side panel renders the selected note. It reads your vaults straight from disk; nothing is uploaded and no vault content lives in this repo.
 
 Features: search with operators, filters (vault, section, tag), local graph focus, Browse drawer (recent, tree, health), backlinks with context, callouts and contents list, hover previews, Excalidraw drawings, 5 color palettes with light/dark, optional click sounds.
 
@@ -24,7 +24,7 @@ Needs Node `^20.19.0 || >=22.12.0`.
     cd Knowledge-Map
     claude                                   # or Codex, Cursor, ... in this folder
 
-Then say **"Set this up for me."** The agent follows [the setup skill](.claude/skills/setup-knowledge-map/SKILL.md): it checks Node, finds the Obsidian vaults already on your machine, asks a few short questions (which vaults, a new work vault or not, which customers, editable or read-only, run at login or on demand), scans your notes for secrets and keeps them out, writes `config.json`, installs, starts the app and checks it really shows your notes. Nothing from anyone else's setup is reused, and nothing leaves your machine.
+Then say **"Set this up for me."** The agent follows [the setup skill](.claude/skills/setup-knowledge-map/SKILL.md): it checks Node, finds the note folders already on your machine (Obsidian vaults or plain markdown folders), asks a few short questions (which vaults, a new work vault or not, which customers, editable or read-only, run at login or on demand), scans your notes for secrets and keeps them out, writes `config.json`, installs, starts the app and checks it really shows your notes. Nothing from anyone else's setup is reused, and nothing leaves your machine.
 
 ### Your own organized work vault
 The setup can create a new vault from [`starter-vault/`](starter-vault): folders by lifecycle (`inbox/ sources/ journal/ projects/<customer>/<project>/ knowledge/ research/ people/ archive/`), a closed list of 16 note types with templates, required `type` / `summary` / `sensitivity` frontmatter, generated hub lists, and a few fictional `acme` examples. By hand: `npm run new-vault -- ~/Documents/Work --owner "Your Name" --customers acme,globex --config --writable`.
@@ -33,6 +33,27 @@ The setup can create a new vault from [`starter-vault/`](starter-vault): folders
 `npm run new-vault -- <your vault> --adopt --config` adds only the rules, templates and agent skills (existing files are never touched). Then start your agent in the vault folder and say **"Organize my vault."** The `organize-vault` skill snapshots the vault and puts it in local git, inventories every note, finds secrets (moved out of the vault and excluded) and customer details, and proposes a manifest: where each note goes, its type and sensitivity, which notes to split into a generic `knowledge/` part and a customer part, and what to redact from generic notes. Nothing changes until you approve; it then applies the plan (moves go through the app so links are rewritten), audits for leaks, and asks once more before finishing.
 
 Day to day, the vault skills keep it tidy: "triage my inbox", "lint the vault", "harvest <project>".
+
+## How the map stays up to date
+- **Vault folders are watched.** Add, edit, move or delete a `.md` file (or an image or drawing) anywhere in a vault and the map reloads about a second later: new notes become nodes, `[[links]]` become edges, links to missing notes show up in Health. No restart needed.
+- **Code projects are cards, not nodes.** Folders under `projects.roots` (e.g. `~/Developer/*`) with a `PLAN.md`, `TODO.md` or `WORKLOG.md` show as resume cards in Today and the customer cockpit. They are read when the page loads, so reload the page to see changes. A folder that is itself a configured vault never gets a card, so a vault can live inside `~/Developer`.
+- **Code is never on the map.** `.xaml`, `.cs`, `project.json` and other code files are ignored. What you learn while coding reaches the map only when it is written into a vault note (next section).
+- **Restart the server only after editing `config.json`** (for example to add a vault).
+
+## Code projects and knowledge
+Example layout: one vault and your projects side by side.
+
+    ~/Developer/
+    ├── knowledge/          vault: on the map (projects/<customer>/<project>/, knowledge/, inbox/, journal/)
+    └── acme-invoice-bot/   code project: a resume card (PLAN.md, TODO.md, WORKLOG.md, *.xaml)
+
+The project folder records how the work goes (plan, iterations, next step). The vault holds what you learned and decided. When you realize something belongs in the vault while you work:
+
+1. **It is clear and reusable:** tell your agent "save this to knowledge: ...". It follows the vault's `README.md` (folder, type, frontmatter, links) and the note appears on the map.
+2. **A loose thought, no time now:** press `c` in the app for a quick capture into `inbox/`; "triage my inbox" files it later.
+3. **Just a hunch:** add a `Learned: ...` line to the project's `WORKLOG.md`; "harvest <project>" picks those up at a milestone or at the end.
+
+Customer details stay in `projects/<customer>/`; the generic part goes to `knowledge/` (the vault skills split mixed notes for you).
 
 ## Always-on (macOS)
     scripts/install-launchd.sh              # start at login, restart on crash
@@ -50,6 +71,6 @@ Tell your coding agent **"There are updates to the repo, update the app."** It f
 - `"jiraBase": "https://<site>.atlassian.net/browse/"` turns ticket keys in the cockpit into links.
 - MCP server for Claude Code (read-only, stdio, no network): `claude mcp add --scope user knowledge-map -- node /abs/path/mcp-server.ts --vaults "my-vault"`. Tools: `search`, `read_note`, `neighbors`, `find_path`, `list_customers`, `customer_brief`, `open_tasks`, `recent_changes`, `context_pack`. `--safe` limits it to notes marked public or internal; leave personal vaults out of `--vaults` unless you want them in every session.
 - Weekly review reads `git log` of vaults that are git repos (read-only); other vaults fall back to file dates.
-- Port 7777 is fixed (see AGENTS.md to change it).
+- Port 7777 is the default; set `KM_PORT` to change it (see AGENTS.md).
 - Not supported: `.canvas`, `.base`, PDF embeds, running Dataview queries.
 - Keep this app private if your vaults hold sensitive material; the code is safe to share, your notes are not.

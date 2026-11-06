@@ -11,6 +11,7 @@ status: current
 
 ## Summary
 Goal: show how a project folder is laid out. Customer: [[acme]].
+Code: `~/Developer/acme-demo` (the code project: plan, worklog and workflow files stay there and show as a resume card, never in this vault).
 
 ## Components
 - `invoice-export`: the first slice, exporting invoices from the old archive.

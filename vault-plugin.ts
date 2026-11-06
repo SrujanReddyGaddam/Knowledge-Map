@@ -467,7 +467,7 @@ export default function vault(): Plugin {
       server.middlewares.use('/api/projects', (req, res) => {
         const bad = guard(req, { post: false, token: true });
         if (req.method !== 'GET' || bad) return send(res, 403, { error: bad || 'forbidden' });
-        try { send(res, 200, { projects: scanProjects(cfg.projects) }); }
+        try { send(res, 200, { projects: scanProjects(cfg.projects, (cfg.vaults || []).map(v => v.path)) }); }
         catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }
       });
       // Weekly review: a vault's own git history for a date range (read-only, only for vaults that are git repos). Dates must be

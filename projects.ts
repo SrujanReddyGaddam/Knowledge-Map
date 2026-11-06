@@ -55,9 +55,13 @@ function parseLog(t: string) {
   return { last: { date, title, next: nl ? clean(nl.replace(/^\s*[-*]?\s*\**Next:?\**:?\s*/i, '')).slice(0, 400) : '' }, text: entry.join('\n').slice(0, 12_000) };
 }
 
-export function scanProjects(cfg: ProjectsCfg | undefined): Project[] {
+const real = (p: string) => { try { return fs.realpathSync(home(p)); } catch { return path.resolve(home(p)); } };
+
+// vaultPaths: configured vaults. A vault inside a root (e.g. ~/Developer/knowledge) is knowledge, not a code project, so it gets no card.
+export function scanProjects(cfg: ProjectsCfg | undefined, vaultPaths: string[] = []): Project[] {
   if (!cfg?.roots?.length) return [];
   const skip = new Set((cfg.exclude || []).map(s => s.toLowerCase()));
+  const vaults = new Set(vaultPaths.map(real));
   const out: Project[] = [];
   for (const r of cfg.roots) {
     const root = home(r);
@@ -66,6 +70,7 @@ export function scanProjects(cfg: ProjectsCfg | undefined): Project[] {
     for (const d of dirs) {
       if (!d.isDirectory() || d.name.startsWith('.') || skip.has(d.name.toLowerCase())) continue;
       const dir = path.join(root, d.name);
+      if (vaults.has(real(dir))) continue;
       const files = TRACK.filter(f => fs.existsSync(path.join(dir, f)));
       if (!files.length) continue;
       const readme = read(path.join(dir, 'README.md')), planT = read(path.join(dir, 'PLAN.md')), todoT = read(path.join(dir, 'TODO.md')), logT = read(path.join(dir, 'WORKLOG.md'));

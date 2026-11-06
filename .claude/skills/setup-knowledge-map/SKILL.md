@@ -12,12 +12,13 @@ Keep the interview short. Ask at most 3 or 4 questions per message, offer a defa
 ## 1. Check the machine (no questions yet)
 - `node -v`: the app needs `^20.19.0 || >=22.12.0`, the vault scripts need 22.18 or newer. If missing or older, offer to install Node 24 LTS (Homebrew `brew install node@24`, or nvm), and wait for a yes.
 - `git --version` (optional, used for the vault safety net), OS (macOS, Linux or Windows), whether port 7777 is free (`lsof -i :7777` or `netstat`). If it is busy, pick 7778 and set `KM_PORT` everywhere below.
-- Look for existing Obsidian vaults: folders that contain `.obsidian/`, at most 4 levels deep under the home folder, plus `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/*` on macOS. Skip `Library/` (except that iCloud path), `node_modules`, and dot-folders. Do not open any note yet.
+- Look for existing note folders. Obsidian is optional: the app reads any folder of markdown notes and never needs `.obsidian/`. Find (a) Obsidian vaults: folders that contain `.obsidian/`, at most 4 levels deep under the home folder, plus `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/*` on macOS; and (b) plain note folders: a folder named like `knowledge`, `notes`, `vault`, `wiki` or `second-brain` with 20 or more `.md` files, at most 3 levels deep (skip code repos: folders with `package.json`, `project.json`, `.sln` or `src/` at the top). Skip `Library/` (except that iCloud path), `node_modules`, and dot-folders. Do not open any note yet.
+- Look for a code projects folder (`~/Developer`, `~/dev`, `~/code`, `~/src`, `~/projects`) whose children have `PLAN.md`, `TODO.md` or `WORKLOG.md`. It becomes `projects.roots` (resume cards).
 
 ## 2. Interview
 **Round 1: what they have.**
-1. Show the vaults you found (path, rough note count from `find -name '*.md' | wc -l`) and ask which to include. Also: "Any other folders of markdown notes, even without Obsidian?"
-2. "Do you want a new, organized work vault as well?" Default: yes if they have no vault, otherwise ask. If yes: where (default `~/Documents/<FirstName>-Work`), and the display name (default "Work").
+1. Show the vaults and note folders you found (path, rough note count from `find -name '*.md' | wc -l`, Obsidian or plain) and ask which to include. Also: "Any other folders of markdown notes, even without Obsidian?" If you found a code projects folder: "Show your code projects (PLAN/TODO/WORKLOG) as resume cards?" (default yes).
+2. "Do you want a new, organized work vault as well?" Default: yes if they have no vault, otherwise ask. If yes: where (default `~/Documents/<FirstName>-Work`; if they keep code projects in a folder like `~/Developer`, offer `~/Developer/knowledge` so notes and projects sit side by side), and the display name (default "Work"). It is a plain folder; Obsidian can open it later but is not needed.
 3. Their name (used in the vault's rules file).
 
 **Round 2: per vault** (one short block per vault).
@@ -40,6 +41,7 @@ For every existing vault, scan the markdown for likely secrets (same patterns as
 3. Existing vault they want the schema for (only if they said yes in question 7): `node scripts/new-vault.mjs "<path>" --adopt --name "<name>" --config [--writable]`. It only adds files that do not exist. If it says to add `@VAULT-RULES.md` (or `@README.md`) to their `CLAUDE.md`, ask, then add that one line.
 4. Existing vault without the schema: add it to `config.json` yourself, using `config.example.json` as the shape, with the `exclude` list from step 3 and `writable` from the interview. No `lint`.
 5. If `config.json` did not exist, `new-vault.mjs --config` creates it. Check that every vault from the interview is in it and that nothing from any example is.
+   If they want resume cards, add `"projects": { "roots": ["<code projects folder>"] }`. A vault inside that folder gets no card automatically (it is knowledge, not a code project), so no `exclude` entry is needed for it.
 6. Run mode: on demand, start `npm run dev` in the background. Always on (macOS): `scripts/install-launchd.sh --label com.<their-short-name>.knowledge-map [--port <port>]` from a shell where `node -v` is the version you checked (`--port` also sets `KM_PORT` for the service).
 
 ## 5. Verify (do not skip)
@@ -52,6 +54,8 @@ For every existing vault, scan the markdown for likely secrets (same patterns as
 Tell them, briefly:
 - The URL, how to start or stop it (or that it runs at login), and where the log is.
 - Keys: `/` search, `b` browse, `t` tasks (every open checkbox from all notes), `n` new note, `e` edit, drag to rotate, scroll to zoom, the shield for Safe mode.
+- How the map updates: notes saved in a vault show up within a second; code project cards refresh when the page reloads; code files (`.xaml`, `.cs`, ...) never appear. Something learned while coding reaches the map only as a vault note: in any agent session say "save this to knowledge: ...", or press `c` for a quick capture, or add a `Learned: ...` line to the project's `WORKLOG.md` for a later "harvest <project>".
+- For "save this to knowledge" to work from any project folder, the agent there must know where the vault is. Offer to add two lines to their global agent instructions (Claude Code: `~/.claude/CLAUDE.md`; ask first, append, never rewrite the file): `My work vault is <vault path>. Before writing any note into it, read its README.md and follow it exactly.` and `After adding notes, run: node <this repo>/scripts/build-indexes.ts <vault path>`.
 - Their vault has agent skills in `<vault>/.claude/skills/`: start Claude Code in the vault folder and say "triage my inbox", "lint the vault", "harvest <project>", or "organize my vault".
 - Offer the next step: "Want me to organize and sanitize your existing notes now?" If yes, follow `<vault>/.claude/skills/organize-vault/SKILL.md` (for a vault that was not adopted, run step 4, item 3 first so the skill and rules are there). It snapshots everything first and asks twice before changing anything.
 - What stays private: everything. `config.json` is git-ignored, vault content never enters this repo, and nothing is uploaded. Do not commit, push or open issues with their paths or notes.
