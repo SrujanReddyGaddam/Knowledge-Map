@@ -82,7 +82,9 @@ const TOOLS: { name: string; description: string; inputSchema: object; run: (a: 
       const n = find(a.note);
       // the exact file text when allowed; in --safe mode the masked body, so names of hidden notes never appear
       let text = n.body;
-      if (!SAFE && n.kind !== 'drawing') { try { text = fs.readFileSync(n.abs, 'utf8'); } catch {} }
+      // drawings and HTML pages: the extracted text (an HTML file is mostly script and markup, useless to read raw)
+      if (!SAFE && !n.kind) { try { text = fs.readFileSync(n.abs, 'utf8'); } catch {} }
+      if (n.kind === 'html') text = `[HTML page: visible text and embedded data, extracted. Open the file in a browser to see it.]\n\n${text}`;
       if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + `\n\n[cut at ${MAX_TEXT} characters; read the file for the rest]`;
       return [`# ${n.title}`, `id: ${n.id}`, `file: ${n.abs}`, `vault: ${n.vault}, section: ${n.section}`, `facts: ${facts(n)}`,
         `links to: ${n.links.map(titleOf).join('; ') || 'none'}`, `linked from: ${n.backlinks.map(titleOf).join('; ') || 'none'}`, '', '---', text].join('\n');

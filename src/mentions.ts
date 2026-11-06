@@ -51,7 +51,7 @@ export function unlinkedMentions(target: Note, notes: Note[]) {
   const quick = names.map(wordRe);
   const out: { note: Note; ctx: string }[] = [];
   for (const n of notes) {
-    if (n.id === target.id || n.kind === 'drawing' || n.links.includes(target.id) || !quick.some(re => re.test(n.body))) continue;
+    if (n.id === target.id || n.kind || n.links.includes(target.id) || !quick.some(re => re.test(n.body))) continue;
     const m = firstMatch(n.body, names);
     if (!m) continue;
     const s = n.body.lastIndexOf('\n', m.at) + 1, e = n.body.indexOf('\n', m.at);

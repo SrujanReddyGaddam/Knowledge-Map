@@ -35,11 +35,11 @@ import { isPerson } from './circlesData';
 const byId = new Map(vault.notes.map(n => [n.id, n]));
 // same rules as the server: exact file name first ([[x.excalidraw]] is the drawing), then the name without .excalidraw, where a note beats a drawing
 const baseKey = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
-const looseKey = (s: string) => baseKey(s).replace(/\.excalidraw$/i, '');
+const looseKey = (s: string) => baseKey(s).replace(/\.(excalidraw|html?)$/i, '');
 type N = typeof vault.notes[number];
 const perVault = new Map<string, Map<string, N>>(), perVaultLoose = new Map<string, Map<string, N>>();
 const globalByBase = new Map<string, N>(), globalLoose = new Map<string, N>();
-const addLoose = (m: Map<string, N>, n: N) => { const k = looseKey(n.path), cur = m.get(k); if (!cur || (cur.kind === 'drawing' && n.kind !== 'drawing')) m.set(k, n); };
+const addLoose = (m: Map<string, N>, n: N) => { const k = looseKey(n.path), cur = m.get(k); if (!cur || (cur.kind && !n.kind)) m.set(k, n); };   // a markdown note beats a drawing or HTML page of the same name
 vault.notes.forEach(n => {
   const k = baseKey(n.path);
   if (!perVault.has(n.vault)) { perVault.set(n.vault, new Map()); perVaultLoose.set(n.vault, new Map()); }

@@ -19,6 +19,7 @@
 11. No secrets in notes, ever: no tokens, passwords, API keys, connection strings. Write where the secret lives instead ("in the team password manager under X").
 
 12. Code stays in its project folder, knowledge comes here. A code project (plan, worklog, `.xaml`, `.cs`) never goes in this vault and is never on the map. What you learn while coding becomes a note here: write it now if it is clear (generic part to `knowledge/`, customer part to `projects/<customer>/<project>/`), capture it to `inbox/` if it is loose, or leave a `Learned: ...` line in the project's `WORKLOG.md` for `harvest-project`. The project hub names its code folder on a `Code: <path>` line.
+13. HTML deliverables (a solution design, a report) are notes too. When one is final or shared, copy it from the project folder to `projects/<customer>/<project>/` here (keep its file name) and link it from the project hub; copy it again when it changes. In its `<head>`, add `<meta name="km:sensitivity" content="customer-confidential">` (and `km:type`, e.g. `assessment` or `reference`) where you can, because without `km:sensitivity` the page is hidden in Safe mode. The app shows it live and isolated; it is never edited here.
 
 ## Folders
 

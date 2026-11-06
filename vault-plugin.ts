@@ -9,12 +9,19 @@ import { rewriteLinks, otherRelativeRefs } from './rename-links.ts';
 import { appendUnder } from './append-text.ts';
 import { scanProjects } from './projects.ts';
 import { execFile } from 'node:child_process';
-import { loadVaults, excluder, fullKey, key, one, MIME, type Config } from './vault-load.ts';
+import { loadVaults, excluder, fullKey, key, one, MIME, IMG, HTML, type Config } from './vault-load.ts';
 
 // Port, config and backup location can be overridden by env so tests can run a throwaway instance beside the real one.
 const PORT = Number(process.env.KM_PORT) || 7777;
 const HOSTS = new Set([`localhost:${PORT}`, `knowledge.localhost:${PORT}`]);          // Host allowlist (blocks DNS rebinding)
 const ORIGINS = new Set([...HOSTS].map(h => `http://${h}`));
+// Vault HTML pages (and images next to them) are served only on this separate origin, never on the app's: a page's own scripts run there,
+// so they can never read the app's token, data or storage. That origin serves nothing else (see the first middleware below), and every
+// page gets a CSP that blocks all network access and framing by anything but the app. Its own localStorage works, so a page keeps its state.
+const HTML_HOST = `html.knowledge.localhost:${PORT}`;
+const HTML_CSP = ["default-src 'none'", "script-src 'unsafe-inline' 'unsafe-eval' blob: data:", "style-src 'unsafe-inline' blob: data:", "img-src 'self' blob: data:",
+  "font-src blob: data:", "media-src 'self' blob: data:", "worker-src blob:", "frame-src blob: data:", "connect-src 'none'", "form-action 'none'", "base-uri 'none'",
+  `frame-ancestors ${[...ORIGINS].join(' ')}`].join('; ');
 const BACKUP_DIR = process.env.KM_BACKUP_DIR || path.join(os.homedir(), '.knowledge-map', 'backups');
 const MAX_EDIT_BYTES = 2 * 1024 * 1024, KEEP_VERSIONS = 50, KEEP_DAYS = 90;
 
@@ -32,11 +39,17 @@ export default function vault(): Plugin {
     resolveId(id) { if (id === ID) return RID; },
     load(id) { if (id === RID) return `export default ${JSON.stringify(current.data)}`; },
     configureServer(server) {
+      // first middleware: the HTML origin serves /vault-html/ and nothing else (no app, no /api, no source files); the app origin never serves /vault-html/
+      server.middlewares.use((req, res, next) => {
+        const onHtmlHost = String(req.headers.host || '').toLowerCase() === HTML_HOST, isHtmlPath = (req.url || '').startsWith('/vault-html/');
+        if (onHtmlHost === isHtmlPath) return next();
+        res.statusCode = 404; res.setHeader('Cache-Control', 'no-store'); res.end('not found');
+      });
       roots.forEach(r => fs.existsSync(r) && server.watcher.add(r));
       let timer: ReturnType<typeof setTimeout> | null = null, external = false;
       const selfWrites = new Map<string, number>();   // real path -> when this server saved it (so our own saves do not reload the page mid-edit)
       const onChange = (f: string) => {
-        if (!roots.some(r => f.startsWith(r)) || /[\\/]\./.test(f.slice(roots.find(r => f.startsWith(r))!.length)) || !/\.(md|excalidraw|png|jpe?g|gif|svg|webp)$/i.test(f)) return;
+        if (!roots.some(r => f.startsWith(r)) || /[\\/]\./.test(f.slice(roots.find(r => f.startsWith(r))!.length)) || !/\.(md|excalidraw|html?|png|jpe?g|gif|svg|webp)$/i.test(f)) return;
         let own = false; try { const t = selfWrites.get(fs.realpathSync(f)); own = !!t && Date.now() - t < 5000; } catch {}
         if (!own) external = true;
         // batch bursts of saves (Obsidian autosave, iCloud sync) into one update
@@ -513,6 +526,27 @@ export default function vault(): Plugin {
           console.log(`[vault] trashed ${abs} -> ${dest}`);
           send(res, 200, { ok: true, trashedTo: dest });
         } catch (e) { send(res, 500, { error: String((e as Error).message || e) }); }
+      });
+      // /vault-html/<vault index>/<path in vault>: an HTML note of the map, or an image inside the same vault (so relative <img src> works)
+      server.middlewares.use('/vault-html', (req, res) => {
+        const no = (code = 404) => { res.statusCode = code; res.setHeader('Cache-Control', 'no-store'); res.end('not found'); };
+        if (req.method !== 'GET' && req.method !== 'HEAD') return no(405);
+        if (String(req.headers.host || '').toLowerCase() !== HTML_HOST) return no();
+        const [vi, ...segs] = (req.url || '').split(/[?#]/)[0].slice(1).split('/');
+        const v = current.vaults[Number(vi)];
+        let rel: string;
+        try { rel = segs.map(decodeURIComponent).join('/'); } catch { return no(); }
+        if (!v || !/^\d+$/.test(vi) || !rel || rel.split('/').some(p => !p || p.startsWith('.')) || excluder(v.exclude)(rel)) return no();
+        const isPage = HTML.test(rel);
+        if (!isPage && !IMG.test(rel)) return no();
+        let real: string;
+        try { real = fs.realpathSync(path.join(v.path, rel)); if (!real.startsWith(fs.realpathSync(v.path) + path.sep) || !fs.statSync(real).isFile()) return no(); } catch { return no(); }
+        if (isPage && !current.data.notes.some((n: { kind?: string; abs: string; vault: string }) => n.kind === 'html' && n.vault === v.name && path.resolve(n.abs) === path.resolve(v.path, rel))) return no();
+        res.setHeader('Content-Type', isPage ? 'text/html; charset=utf-8' : MIME[path.extname(real).slice(1).toLowerCase()] || 'application/octet-stream');
+        res.setHeader('Content-Security-Policy', isPage ? HTML_CSP : "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+        res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('Cache-Control', 'no-store');
+        if (req.method === 'HEAD') return res.end();
+        fs.createReadStream(real).pipe(res);
       });
       server.middlewares.use('/vault-assets', (req, res, next) => {
         const [vi, ...rest] = (req.url || '').slice(1).split('/');

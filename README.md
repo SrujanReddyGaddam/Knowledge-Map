@@ -37,6 +37,7 @@ Day to day, the vault skills keep it tidy: "triage my inbox", "lint the vault", 
 ## How the map stays up to date
 - **Vault folders are watched.** Add, edit, move or delete a `.md` file (or an image or drawing) anywhere in a vault and the map reloads about a second later: new notes become nodes, `[[links]]` become edges, links to missing notes show up in Health. No restart needed.
 - **Code projects are cards, not nodes.** Folders under `projects.roots` (e.g. `~/Developer/*`) with a `PLAN.md`, `TODO.md` or `WORKLOG.md` show as resume cards in Today and the customer cockpit. They are read when the page loads, so reload the page to see changes. A folder that is itself a configured vault never gets a card, so a vault can live inside `~/Developer`.
+- **HTML pages are notes too.** An `.html` file in a vault (for example a generated solution design) is a node like any note: title, summary and searchable text come from the page, links go both ways. The panel shows the page live, with Full page and New tab buttons. Pages run on their own local address (`html.knowledge.localhost`), with no network and no access to the app, so a page can never read or change your notes; it keeps its own saved state (theme, feedback) in that browser. Optional tags in the page's `<head>` set what frontmatter would: `<meta name="km:sensitivity" content="internal">`, also `km:type`, `km:customer`, `km:project`, `km:tags`, `km:summary`. Without `km:sensitivity` a page is hidden in Safe mode. Read-only: no editing in the app.
 - **Code is never on the map.** `.xaml`, `.cs`, `project.json` and other code files are ignored. What you learn while coding reaches the map only when it is written into a vault note (next section).
 - **Restart the server only after editing `config.json`** (for example to add a vault).
 
@@ -51,7 +52,8 @@ The project folder records how the work goes (plan, iterations, next step). The 
 
 1. **It is clear and reusable:** tell your agent "save this to knowledge: ...". It follows the vault's `README.md` (folder, type, frontmatter, links) and the note appears on the map.
 2. **A loose thought, no time now:** press `c` in the app for a quick capture into `inbox/`; "triage my inbox" files it later.
-3. **Just a hunch:** add a `Learned: ...` line to the project's `WORKLOG.md`; "harvest <project>" picks those up at a milestone or at the end.
+3. **A finished HTML deliverable** (an SDD, a report): copy it to `projects/<customer>/<project>/` in the vault and link it from the project hub. Copy it again when it changes; the project folder keeps the working copy.
+4. **Just a hunch:** add a `Learned: ...` line to the project's `WORKLOG.md`; "harvest <project>" picks those up at a milestone or at the end.
 
 Customer details stay in `projects/<customer>/`; the generic part goes to `knowledge/` (the vault skills split mixed notes for you).
 
@@ -72,5 +74,5 @@ Tell your coding agent **"There are updates to the repo, update the app."** It f
 - MCP server for Claude Code (read-only, stdio, no network): `claude mcp add --scope user knowledge-map -- node /abs/path/mcp-server.ts --vaults "my-vault"`. Tools: `search`, `read_note`, `neighbors`, `find_path`, `list_customers`, `customer_brief`, `open_tasks`, `recent_changes`, `context_pack`. `--safe` limits it to notes marked public or internal; leave personal vaults out of `--vaults` unless you want them in every session.
 - Weekly review reads `git log` of vaults that are git repos (read-only); other vaults fall back to file dates.
 - Port 7777 is the default; set `KM_PORT` to change it (see AGENTS.md).
-- Not supported: `.canvas`, `.base`, PDF embeds, running Dataview queries.
+- Not supported: `.canvas`, `.base`, PDF embeds, running Dataview queries, editing HTML pages in the app.
 - Keep this app private if your vaults hold sensitive material; the code is safe to share, your notes are not.

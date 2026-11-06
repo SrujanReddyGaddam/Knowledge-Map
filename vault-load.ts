@@ -29,10 +29,12 @@ export function walk(dir: string, acc: string[] = []): string[] {
 
 // fullKey keeps .excalidraw so x.md and x.excalidraw.md stay apart; key is the looser name ([[x]] may still mean a drawing x when there is no note x)
 export const fullKey = (s: string) => s.trim().split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
-export const key = (s: string) => fullKey(s).replace(/\.excalidraw$/i, '');
+export const key = (s: string) => fullKey(s).replace(/\.(excalidraw|html?)$/i, '');
+export const HTML = /\.html?$/i;
+const MAX_HTML_BYTES = 8 * 1024 * 1024, MAX_HTML_TEXT = 40_000;
 export const wikilinks = (t: string) => [...t.matchAll(/(?<!!)\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g)].map(m => m[1].trim());
-// [text](./other.md) style links between notes (never http, never images)
-const mdlinks = (t: string) => [...t.matchAll(/(?<!!)\[[^\]]*\]\((?!https?:|mailto:|#)([^)\s]+?\.md)(?:#[^)]*)?\)/g)].map(m => decodeURIComponent(m[1]).trim());
+// [text](./other.md) and [text](./page.html) style links between notes (never http, never images)
+const mdlinks = (t: string) => [...t.matchAll(/(?<!!)\[[^\]]*\]\((?!https?:|mailto:|#)([^)\s]+?\.(?:md|html?))(?:#[^)]*)?\)/g)].map(m => decodeURIComponent(m[1]).trim());
 export const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' && v ? v.split(',').map(s => s.trim()).filter(Boolean) : []);
 
 function summaryOf(body: string) {
@@ -77,7 +79,7 @@ type RawNote = {
   vi: number; vault: string; base: string; fkey: string; path: string; abs: string; folder: string; title: string; tags: string[]; status: string; source: string; fetched: string;
   summary: string; body: string; related: string[]; rawLinks: string[]; id: string; links: string[]; backlinks: string[]; section: string;
   type: string; customer: string; project: string; component: string; sensitivity: string; meta: Record<string, string>;
-  kind?: 'drawing'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number; writable: boolean;
+  kind?: 'drawing' | 'html'; scene?: { elements: any[]; appState?: any; files?: any }; mtime: number; writable: boolean;
 };
 
 // Excalidraw: the Obsidian plugin stores the scene LZ-compressed inside a ```compressed-json block; raw .excalidraw files are plain JSON.
@@ -96,6 +98,58 @@ function readScene(raw: string, isRawFile: boolean) {
   } catch { return null; }
 }
 
+// HTML pages (e.g. generated solution designs): never rendered here, only read for the map. Title, summary and km:* meta tags
+// (<meta name="km:type" content="...">, also km:customer, km:project, km:component, km:sensitivity, km:status, km:tags, km:summary)
+// stand in for frontmatter; the searchable body is the visible text plus the strings of embedded JSON data (an SDD keeps its content
+// in <script id="sdd-content" type="application/json">). Links are relative <a href> to other .md/.html files.
+const ENT: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+const decode = (t: string) => t.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENT[e.toLowerCase()] ?? m);
+const attr = (tag: string, name: string) => decode(tag.match(new RegExp(`\\s${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i'))?.slice(2).find(x => x !== undefined) ?? '');
+export function readHtml(text: string) {
+  const fm: Record<string, any> = {};
+  for (const m of text.matchAll(/<meta\b[^>]*>/gi)) {
+    const name = attr(m[0], 'name').toLowerCase(), content = attr(m[0], 'content').trim();
+    if (!content) continue;
+    if (name === 'description' && !fm.summary) fm.summary = content;
+    else if (name.startsWith('km:')) fm[name.slice(3)] = name === 'km:tags' ? content.split(',').map(s => s.trim()).filter(Boolean) : content;
+  }
+  const strings: string[] = [];
+  let sdd: any = null;
+  for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    if (!/type\s*=\s*["']?application\/(ld\+)?json/i.test(m[1])) continue;
+    try {
+      const j = JSON.parse(m[2]);
+      if (/id\s*=\s*["']?sdd-content/i.test(m[1])) sdd = j;
+      const walkJ = (v: any, k = '') => {
+        if (typeof v === 'string') { if (v.length > 2 && !/^(id|from|to|lane|style|kind|component|col)$/.test(k) && !/^https?:\/\/\S+$|^[\w-]+$/.test(v)) strings.push(v); }
+        else if (Array.isArray(v)) v.forEach(x => walkJ(x, k));
+        else if (v && typeof v === 'object') for (const [kk, x] of Object.entries(v)) walkJ(x, kk);
+      };
+      walkJ(j);
+    } catch {}
+  }
+  const visible = decode(text.replace(/<(script|style|template|svg)\b[\s\S]*?<\/\1>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<br\s*\/?>|<\/(p|div|li|h\d|tr|section|article)>/gi, '\n\n').replace(/<[^>]+>/g, ' '))
+    .split(/\n\s*\n/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const title = decode(text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim();
+  const h1 = decode((text.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '').match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || '').replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+  if (!fm.title) fm.title = (typeof sdd?.title === 'string' && sdd.title) || title || h1 || '';
+  if (sdd) {
+    const sum = typeof sdd.summary === 'string' ? sdd.summary : typeof sdd.summary?.problem === 'string' ? sdd.summary.problem : '';
+    if (!fm.summary && sum) fm.summary = sum;
+    if (typeof sdd.asOf === 'string' && !fm.updated) fm.updated = sdd.asOf;
+    if (typeof sdd.status === 'string' && sdd.status) fm.sdd_status = sdd.status;
+    fm.tags = [...asList(fm.tags), 'sdd'];
+  }
+  if (!fm.summary) fm.summary = visible.find(t => t.length >= 60 && t !== fm.title) || '';
+  if (fm.summary) fm.summary = String(fm.summary).replace(/\s+/g, ' ').replace(/^(.{140,320}?[.!?])\s.*$/, '$1').slice(0, 320);
+  const seen = new Set<string>(), parts: string[] = [];
+  let len = 0;
+  for (const t of [...visible, ...strings]) { const k = t.toLowerCase(); if (seen.has(k)) continue; seen.add(k); if ((len += t.length + 2) > MAX_HTML_TEXT) break; parts.push(t); }
+  const links = [...text.matchAll(/<a\b[^>]*>/gi)].map(m => attr(m[0], 'href')).filter(h => h && !/^[a-z][\w+.-]*:|^#|^\/\//i.test(h))
+    .map(h => { try { return decodeURIComponent(h.split(/[?#]/)[0]); } catch { return h.split(/[?#]/)[0]; } }).filter(h => /\.(md|html?)$/i.test(h));
+  return { fm, body: parts.join('\n\n'), links, sdd: !!sdd };
+}
+
 export function loadVaults(cfg: Config) {
   const vaults = vaultList(cfg), multi = vaults.length > 1;
   const raws: RawNote[] = [];
@@ -111,20 +165,27 @@ export function loadVaults(cfg: Config) {
     const images = new Map(files.filter(f => IMG.test(f)).map(f => [path.basename(f), f]));
     assets.push(images);
     const skip = excluder(v.exclude);
-    for (const f of files.filter(f => (f.endsWith('.md') || f.endsWith('.excalidraw')) && !skip(path.relative(v.path, f).split(path.sep).join('/')))) {
-      const rel = path.relative(v.path, f), parts = rel.split(path.sep), isRawXl = f.endsWith('.excalidraw');
-      const base = path.basename(f).replace(/\.md$/i, '').replace(/\.excalidraw$/i, '');
+    for (const f of files.filter(f => (f.endsWith('.md') || f.endsWith('.excalidraw') || HTML.test(f)) && !skip(path.relative(v.path, f).split(path.sep).join('/')))) {
+      const rel = path.relative(v.path, f), parts = rel.split(path.sep), isRawXl = f.endsWith('.excalidraw'), isHtml = HTML.test(f);
+      const base = path.basename(f).replace(/\.md$/i, '').replace(/\.excalidraw$/i, '').replace(HTML, '');
+      if (isHtml) { try { if (fs.statSync(f).size > MAX_HTML_BYTES) { broken.push(`too large, skipped: ${rel}`); continue; } } catch {} }
       // one unreadable file (an iCloud file being downloaded or evicted, a permission problem) must not take the whole map down: skip it
       let text: string; try { text = fs.readFileSync(f, 'utf8'); } catch (e) { broken.push(`not readable, skipped: ${rel} (${(e as NodeJS.ErrnoException).code || e})`); continue; }
       let mtime = 0; try { mtime = Math.round(fs.statSync(f).mtimeMs); } catch {}
-      const scene = isRawXl || /excalidraw-plugin:/.test(text.slice(0, 400)) ? readScene(text, isRawXl) : null;
-      const parsed = isRawXl ? { fm: {} as Record<string, any>, body: '', hasFm: false } : parseFrontmatter(text);
+      const scene = !isHtml && (isRawXl || /excalidraw-plugin:/.test(text.slice(0, 400))) ? readScene(text, isRawXl) : null;
+      const page = isHtml ? readHtml(text) : null;
+      if (page) {   // customer and project from the folder (projects/<customer>/<project>/) when the page does not say
+        const pp = rel.split(path.sep);
+        if (pp[0] === 'projects' && pp.length > 2 && !page.fm.customer) page.fm.customer = pp[1];
+        if (pp[0] === 'projects' && pp.length > 3 && !page.fm.project) page.fm.project = pp[2];
+      }
+      const parsed = page ? { fm: page.fm, body: page.body, hasFm: true } : isRawXl ? { fm: {} as Record<string, any>, body: '', hasFm: false } : parseFrontmatter(text);
       const { fm, hasFm } = parsed;
       // for drawings the searchable body is the text inside the drawing, not the compressed payload
       const drawingText: string = scene ? scene.elements.filter((e: any) => e.type === 'text' && e.text).map((e: any) => e.text).join('\n\n') : '';
       const body = scene ? drawingText : parsed.body;
       const h1 = body.replace(/^(```|~~~)[\s\S]*?^\1/gm, '').match(/^#\s+(.+)$/m)?.[1]?.trim();   // a '# comment' inside a code block is not a heading
-      const tags = [...new Set([...asList(fm.tags), ...(typeof fm.type === 'string' && fm.type ? [fm.type] : []), ...(scene ? ['excalidraw'] : [])])];
+      const tags = [...new Set([...asList(fm.tags), ...(typeof fm.type === 'string' && fm.type ? [fm.type] : []), ...(scene ? ['excalidraw'] : []), ...(page ? ['html'] : [])])];
       const status = String(fm.status || '').toLowerCase().match(/current|stale|needs-verification|draft|closed|deprecated|archived|superseded/)?.[0] || (hasFm ? 'unknown' : 'none');
       const rewritten = outsideCode(body, s => s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (m, name: string) => {
         const b = path.basename(name.trim());
@@ -139,10 +200,10 @@ export function loadVaults(cfg: Config) {
         title: (fm.title as string) || h1 || base, tags, status,
         source: fm.source && fm.source !== 'none' ? String(fm.source) : '', fetched: String(fm.source_fetched || fm.updated || fm.date || ''),
         summary: scene ? `Excalidraw drawing, ${scene.elements.length} elements.${drawingText ? ' ' + drawingText.trim().split(/\n+/)[0].slice(0, 90) : ''}` : (typeof fm.summary === 'string' && fm.summary ? fm.summary.slice(0, 320) : summaryOf(body)),
-        ...(scene ? { kind: 'drawing' as const, scene } : {}),
+        ...(scene ? { kind: 'drawing' as const, scene } : {}), ...(page ? { kind: 'html' as const } : {}),
         type: one(fm.type).toLowerCase(), customer: one(fm.customer).toLowerCase(), project: one(fm.project).toLowerCase(), component: one(fm.component).toLowerCase(),
         sensitivity: (one(fm.sensitivity) || v.sensitivity).toLowerCase(), meta: metaOf(fm),
-        mtime, writable: v.writable && !scene && f.endsWith('.md'), body: rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: (prose => [...wikilinks(prose), ...mdlinks(prose)])(withoutCode(body)), links: [], backlinks: [],
+        mtime, writable: v.writable && !scene && f.endsWith('.md'), body: page ? body : rewritten, related: asList(fm.related).flatMap(wikilinks), rawLinks: page ? page.links : (prose => [...wikilinks(prose), ...mdlinks(prose)])(withoutCode(body)), links: [], backlinks: [],
       });
     }
   });
@@ -150,7 +211,7 @@ export function loadVaults(cfg: Config) {
   // unique ids: bare filename when unique, otherwise "<vault>/<path>" so notes with the same name never collide
   const count = new Map<string, number>();
   raws.forEach(n => count.set(n.base, (count.get(n.base) || 0) + 1));
-  raws.forEach(n => { if (count.get(n.base)! > 1) n.id = `${n.vault}/${n.path.replace(/\.md$/, '')}`; });
+  raws.forEach(n => { if (count.get(n.base)! > 1) n.id = `${n.vault}/${n.path.replace(/\.md$/, '')}`; });   // x.html keeps its extension, so it never collides with x.md
 
   // link resolution: same vault first, then any other vault
   // exact file name first ([[x.excalidraw]] is the drawing), then the loose name, where a note beats a drawing ([[x]] is x.md)
@@ -159,7 +220,7 @@ export function loadVaults(cfg: Config) {
     for (const n of list) {
       if (lastWins || !exact.has(n.fkey)) exact.set(n.fkey, n);
       const k = key(n.fkey), cur = loose.get(k);
-      if (!cur || (cur.kind === 'drawing' && n.kind !== 'drawing') || (lastWins && (cur.kind === 'drawing') === (n.kind === 'drawing'))) loose.set(k, n);
+      if (!cur || (cur.kind && !n.kind) || (lastWins && !!cur.kind === !!n.kind)) loose.set(k, n);
     }
     return (t: string) => exact.get(fullKey(t)) ?? loose.get(key(t));
   };

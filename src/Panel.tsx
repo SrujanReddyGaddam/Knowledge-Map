@@ -192,6 +192,8 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
   const copy = (what: string, text: string) => navigator.clipboard.writeText(text).then(() => { setCopied(what); setTimeout(() => setCopied(''), 1400); });
   const outs = note ? note.links.map(i => byId.get(i)!).filter(Boolean) : [];
   const ins = useMemo(() => (note ? note.backlinks.map(i => byId.get(i)!).filter(Boolean).map(b => ({ n: b, ctx: mention(b, note) })) : []), [note, byId]);
+  // HTML notes are shown from their own origin (see vault-plugin.ts): their scripts can never reach this page, its token or its data
+  const htmlSrc = note?.kind === 'html' ? `${location.protocol}//html.knowledge.localhost:${location.port || '80'}/vault-html/${vault.vaults.indexOf(note.vault)}/${note.path.split(/[\\/]/).map(encodeURIComponent).join('/')}` : '';
   const obsidian = note ? `obsidian://open?vault=${encodeURIComponent(note.vault)}&file=${encodeURIComponent(note.path.replace(/\.md$/, ''))}` : '#';
   const sub = note ? restTitle(note.title) : '';
 
@@ -235,7 +237,7 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             </div>}
             <div className="p-meta">{[
               'Edited ' + ago(note.mtime),
-              note.kind !== 'drawing' && Math.max(1, Math.round(note.body.split(/\s+/).filter(Boolean).length / 220)) + ' min read',
+              !note.kind && Math.max(1, Math.round(note.body.split(/\s+/).filter(Boolean).length / 220)) + ' min read',
               `${note.backlinks.length} ${note.backlinks.length === 1 ? 'link' : 'links'} in, ${note.links.length} out`,
               note.fetched && 'fetched ' + note.fetched,
             ].filter(Boolean).join('  \u00b7  ')}</div>
@@ -246,11 +248,18 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
             </div>}
             {isPerson(note) && <PersonProfile note={note} canWrite={note.writable && !safeMode} resolve={resolve} onNav={onNav} />}
             {note.kind === 'drawing' && note.scene && <section className="print-keep"><div className="label">Drawing</div><Drawing scene={note.scene} dark={dark} /></section>}
-            {note.kind !== 'drawing' && toc.length >= 3 && <section className="toc">
+            {note.kind === 'html' && <section className="html-sec">
+              <div className="html-bar"><span className="label">Page</span><small>runs in its own sandbox, no network</small>
+                <button className="btn" onClick={onMax} title={maxed ? 'Back to the side panel (Esc)' : 'Show the page across the whole window'}>{maxed ? 'Exit full page' : 'Full page'}</button>
+                <a className="btn" href={htmlSrc} target="_blank" rel="noopener noreferrer" title="Open the page in a new browser tab (still isolated from the app)">New tab</a></div>
+              <iframe key={note.id + ':' + note.mtime} className={'html-frame' + (maxed ? ' max' : '')} src={htmlSrc} title={note.title} referrerPolicy="no-referrer"
+                sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads" />
+            </section>}
+            {!note.kind && toc.length >= 3 && <section className="toc">
               <button className="toc-head" onClick={() => setTocOpen(v => !v)} aria-expanded={tocOpen}><span className="label">Contents ({toc.length})</span><span className={'chev' + (tocOpen ? ' flip' : '')}>&#8964;</span></button>
               {tocOpen && <ol>{toc.map(t => <li key={t.id} style={{ paddingLeft: (t.level - 2) * 14 }}><button onClick={() => goTo(t.id)}>{t.text}</button></li>)}</ol>}
             </section>}
-            {note.kind !== 'drawing' && <section className="print-keep">
+            {!note.kind && <section className="print-keep">
               <div className="label">Full note</div>
               {tickErr && <div className="tick-err">{tickErr}</div>}
               <div ref={mdRef} className={'md' + (expanded || maxed ? ' expanded' : '')} dangerouslySetInnerHTML={{ __html: html }}
@@ -290,11 +299,11 @@ export default function Panel({ dark, width, maxed, onMax, fs, onFs, onResize, o
               {note.writable && <button className="btn" onClick={() => setHist(true)} title="Saved versions of this note, compare and restore">History</button>}
               <button className="btn" onClick={() => copy('claude', contextPack(vaultNotes, note.id, jiraBase))} title="Copy a context pack for Claude Code: this note, its links and backlinks (paths and summaries), open tasks, questions and tickets">{copied === 'claude' ? 'Context copied' : 'Hand to Claude'}</button>
               <button className="btn" onClick={onPath} title="Shortest link path from this note to another one, drawn on the map  (p)">Path to...</button>
-              <a className="btn primary" href={obsidian}>Open in Obsidian</a>
-              <button className="btn" onClick={() => exportPdf(shortTitle(note.title))} title="Print this note, or choose Save as PDF in the print dialog">Export PDF</button>
+              {note.kind !== 'html' && <a className="btn primary" href={obsidian}>Open in Obsidian</a>}
+              {note.kind !== 'html' && <button className="btn" onClick={() => exportPdf(shortTitle(note.title))} title="Print this note, or choose Save as PDF in the print dialog">Export PDF</button>}
               <button className="btn" onClick={() => { if (!note.abs) { location.reload(); return; } copy('path', note.abs); }} title={note.abs}>{copied === 'path' ? 'Path copied' : 'Copy path'}</button>
               <button className="btn" onClick={() => copy('share', location.origin + location.pathname + '#' + encodeURIComponent(note.id))}>{copied === 'share' ? 'Link copied' : 'Share'}</button>
-              <button className="btn" onClick={() => copy('md', note.body)}>{copied === 'md' ? 'Copied' : 'Copy markdown'}</button>
+              {note.kind !== 'html' && <button className="btn" onClick={() => copy('md', note.body)}>{copied === 'md' ? 'Copied' : 'Copy markdown'}</button>}
               <button className="btn" onClick={() => copy('link', `[[${note.id}]]`)}>{copied === 'link' ? 'Copied' : 'Copy [[link]]'}</button>
               {!confirmDel
                 ? <button className="btn danger" onClick={() => setConfirmDel(true)}>Delete</button>
