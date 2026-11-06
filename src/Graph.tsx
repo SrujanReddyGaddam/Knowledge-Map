@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { LOW_GFX, PIXEL_RATIO } from './gfx';
 import gsap from 'gsap';
 import { forceSimulation, forceManyBody, forceLink, forceRadial, forceCollide } from 'd3-force-3d';
 import type { Note } from 'virtual:vault';
@@ -63,8 +64,8 @@ export default function Graph(props: Props) {
     sim.alpha(0.1).alphaTarget(0.02).restart();
 
     // three.js scene
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: !LOW_GFX, alpha: false, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(PIXEL_RATIO);
     const cv = renderer.domElement; cv.className = 'graph'; host.appendChild(cv);
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(FOV, 1, 50, 6000);
@@ -86,7 +87,7 @@ export default function Graph(props: Props) {
     pg.setAttribute('position', new THREE.BufferAttribute(pp, 3).setUsage(THREE.DynamicDrawUsage));
     pg.setAttribute('color', new THREE.BufferAttribute(pc, 3).setUsage(THREE.DynamicDrawUsage));
     const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d')!; g.fillStyle = '#fff'; g.beginPath(); g.arc(16, 16, 15, 0, 7); g.fill(); return new THREE.CanvasTexture(c); })();
-    const dots = new THREE.Points(pg, new THREE.PointsMaterial({ size: 3.4 * Math.min(devicePixelRatio || 1, 2), map: dotTex, vertexColors: true, sizeAttenuation: false, transparent: false, alphaTest: 0.35, depthTest: false, depthWrite: false }));
+    const dots = new THREE.Points(pg, new THREE.PointsMaterial({ size: 3.4 * PIXEL_RATIO, map: dotTex, vertexColors: true, sizeAttenuation: false, transparent: false, alphaTest: 0.35, depthTest: false, depthWrite: false }));
     dots.frustumCulled = false; dots.renderOrder = 0.5;
     const mkRing = () => {
       const m = new THREE.Mesh(new THREE.RingGeometry(1.28, 1.4, 64), new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false }));
@@ -98,7 +99,7 @@ export default function Graph(props: Props) {
     const qg = new THREE.BufferGeometry();
     qg.setAttribute('position', new THREE.BufferAttribute(qp, 3).setUsage(THREE.DynamicDrawUsage));
     qg.setAttribute('color', new THREE.BufferAttribute(qc, 3).setUsage(THREE.DynamicDrawUsage));
-    const pulse = new THREE.Points(qg, new THREE.PointsMaterial({ size: 9 * Math.min(devicePixelRatio || 1, 2), map: dotTex, vertexColors: true, sizeAttenuation: false, transparent: false, alphaTest: 0.35, depthTest: false, depthWrite: false }));
+    const pulse = new THREE.Points(qg, new THREE.PointsMaterial({ size: 9 * PIXEL_RATIO, map: dotTex, vertexColors: true, sizeAttenuation: false, transparent: false, alphaTest: 0.35, depthTest: false, depthWrite: false }));
     pulse.frustumCulled = false; pulse.renderOrder = 3;
     scene.add(lines, dots, discs, hoverRing, selRing, pulse);
 
@@ -410,7 +411,7 @@ export default function Graph(props: Props) {
         }
       } else qp.fill(1e7);
       qg.attributes.position.needsUpdate = true; qg.attributes.color.needsUpdate = true;
-      (dots.material as THREE.PointsMaterial).size = 3.4 * Math.min(devicePixelRatio || 1, 2) * clamp(zoomK * 1.1, 0.45, 1.1);
+      (dots.material as THREE.PointsMaterial).size = 3.4 * PIXEL_RATIO * clamp(zoomK * 1.1, 0.45, 1.1);
       pg.attributes.position.needsUpdate = true; pg.attributes.color.needsUpdate = true;
 
       const ringFor = (ring: THREE.Mesh, id: string | null) => {

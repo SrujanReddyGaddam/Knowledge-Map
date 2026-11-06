@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { LOW_GFX, PIXEL_RATIO } from './gfx';
 import gsap from 'gsap';
 import type { Note } from 'virtual:vault';
 import type { Colors } from './palettes';
@@ -43,8 +44,8 @@ export default function Circles({ notes, colors, dark, right, selected, safe, on
 
   useEffect(() => {
     const el = host.current; if (!el || !d.people.length) return;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: !LOW_GFX, alpha: true });
+    renderer.setPixelRatio(PIXEL_RATIO);
     const cv = renderer.domElement; cv.className = 'ci-canvas'; el.prepend(cv);
     const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(FOV, 1, 10, 8000);
     const ball = new THREE.Group(); scene.add(ball);
